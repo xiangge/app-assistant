@@ -5,8 +5,8 @@ var CONFIG = {
     LOOP_INTERVAL: 2000,
     SWIPE_DURATION: 500,
     MAX_RETRY: 3,
-    RANDOM_DELAY_MIN: 20,
-    RANDOM_DELAY_MAX: 120,
+    RANDOM_DELAY_MIN: 5,
+    RANDOM_DELAY_MAX: 35,
 };
 
 var state = {
@@ -24,7 +24,7 @@ var state = {
 
 // 轮询等待：每 step ms 检查条件，满足立即返回，超时返回 false
 function waitUntil(checkFn, maxMs, step) {
-    step = step || 250;
+    step = step || 120;
     for (var elapsed = 0; elapsed < maxMs; elapsed += step) {
         if (checkFn()) return true;
         sleep(step);
@@ -128,9 +128,13 @@ function showControlPanel() {
 function launchNeoApp() {
     log("启动 neo 应用...");
 
-    // 直接用包名启动（比 app.launchApp 按名称更可靠）
-    app.launch(CONFIG.APP_PACKAGE);
-    sleep(3000);
+    if (currentPackage() != CONFIG.APP_PACKAGE) {
+        // 直接用包名启动（比 app.launchApp 按名称更可靠）
+        app.launch(CONFIG.APP_PACKAGE);
+        waitUntil(function () {
+            return currentPackage() == CONFIG.APP_PACKAGE;
+        }, 1800, 100);
+    }
 
     // 检查是否启动成功
     var pkg = currentPackage();
@@ -142,13 +146,15 @@ function launchNeoApp() {
         // 重试一次
         log("首次启动未成功，重试...");
         app.launch(CONFIG.APP_PACKAGE);
-        sleep(5000);
+        waitUntil(function () {
+            return currentPackage() == CONFIG.APP_PACKAGE;
+        }, 2500, 120);
         pkg = currentPackage();
         if (pkg == CONFIG.APP_PACKAGE) {
             log("重试成功");
         } else {
             log("启动失败，当前包名: " + pkg + "，请手动打开 neo");
-            sleep(10000);
+            sleep(2000);
         }
     }
 }
@@ -171,6 +177,12 @@ function handleCurrentScreen() {
         return;
     }
 
+    // neo-06: 学习开始后的继续/退出覆盖层，必须优先点继续，避免通用逻辑误点退出。
+    if (isOnResumeOverlay()) {
+        handleResumeOverlay();
+        return;
+    }
+
     // 得分页优先处理，避免被“继续”抢先点击
     if (isOnResultPage()) {
         handleResultPage();
@@ -185,7 +197,7 @@ function handleCurrentScreen() {
     // loading 中直接等
     if (isOnLoadingPage()) {
         log("加载中，等待...");
-        sleep(3000);
+        sleep(800);
         return;
     }
 
@@ -197,9 +209,18 @@ function handleCurrentScreen() {
 
     // MainActivity 的子页面（Preview/GO、学习中、完成）
     if (act == "com.nexgen.nsa.MainActivity") {
+        if (isOnResultPage()) {
+            handleResultPage();
+            return;
+        }
         // Preview页：有Preview文字或GO按钮（优先，避免误判成完成页）
         if (isOnPreviewPage()) {
             handlePreviewPage();
+            return;
+        }
+        // 完成页：一旦出现就优先回Home，避免被练习页/兜底逻辑误判后点到重播或X。
+        if (isOnCompletePage()) {
+            handleCompletePage();
             return;
         }
         // 练习/选择页：优先处理，避免被标题 The Secret Code 误判成完成页
@@ -207,32 +228,27 @@ function handleCurrentScreen() {
             handleExercise();
             return;
         }
-        // 完成页：无Preview无GO，且没有可答题控件，同一页面连续6次以上确认不是下载中
-        if (isOnCompletePage() && state.samePageCount >= 6) {
-            handleCompletePage();
+        // MainActivity 未知状态不点底部兜底/随机按钮，避免误点neo-08左侧循环按钮。
+        if (clickMidScreenContinueIcon()) {
             return;
         }
-        if (clickContinueIfExists(true)) {
-            return;
-        }
-        // 下载中/学习中短等；很快交给通用逻辑按当前界面控件尝试点击
-        if (state.samePageCount < 2) {
-            log("  MainActivity未知状态，短等... (" + state.samePageCount + "/2)");
-            sleep(800);
-            return;
-        }
-        handleGenericScreen();
-        return;
-    }
-
-    // Topic 子列表必须在 Menu 之前检测——Topic页上有"Unit"文字，会误触isOnMenuPage
-    if (isOnTopicPage()) {
-        handleTopicPage();
+        log("  MainActivity未知状态，等待下一轮重新识别");
+        sleep(500);
         return;
     }
 
     if (isOnLevelPage()) {
         handleLevelPage();
+        return;
+    }
+
+    if (isOnUnitListPage()) {
+        handleMenuPage();
+        return;
+    }
+
+    if (isOnTopicPage()) {
+        handleTopicPage();
         return;
     }
 
@@ -304,42 +320,117 @@ function handleAutoXDialog() {
         clickNode(candidates[0]);
         log("  处理AutoX弹窗: 点击上方非退出按钮");
     } else {
-        back();
-        log("  处理AutoX弹窗: 无按钮文本，先返回露出neo页面");
+        log("  处理AutoX弹窗: 无按钮文本，等待下一轮，不自动返回");
     }
     sleep(500);
 }
 
+function isOnResumeOverlay() {
+    return (textContains("继续").exists()
+            && (textContains("退出").exists()
+            || textContains("The Secret Code").exists()
+            || textContains("Preview").exists()
+            || textContains("The Crime").exists()))
+        || (textContains("继续").exists() && hasCenterResumeLikeButton());
+}
+
+function handleResumeOverlay() {
+    log("处理neo继续/退出覆盖层，点击继续");
+
+    var cont = text("继续").findOne(300)
+        || textContains("继续").findOne(300)
+        || desc("继续").findOne(300)
+        || descContains("继续").findOne(300);
+
+    if (cont) {
+        var b = cont.bounds();
+        var cx = Math.floor((b.left + b.right) / 2);
+        var cy = Math.floor((b.top + b.bottom) / 2);
+        if (cy < device.height * 0.65) {
+            click(cx, cy);
+            sleep(50);
+            press(cx, cy, 80);
+            log("  点击继续文字 @(" + cx + "," + cy + ")");
+            sleep(250);
+            return;
+        }
+    }
+
+    var points = [
+        { x: 0.50, y: 0.400 },
+        { x: 0.50, y: 0.385 },
+        { x: 0.50, y: 0.415 },
+    ];
+    for (var i = 0; i < points.length; i++) {
+        var tapped = tapOnceByRatio(points[i].x, points[i].y);
+        sleep(50);
+        press(tapped.x, tapped.y, 80);
+        log("  继续文字不可点，按截图坐标点击播放按钮 @(" + tapped.x + "," + tapped.y + ")");
+        sleep(120);
+        if (!isOnResumeOverlay()) return;
+    }
+    sleep(250);
+}
+
 function dismissPopups() {
     var closeButtons = [
-        text("关闭").findOne(1000),
-        text("确定").findOne(1000),
-        text("知道了").findOne(1000),
-        text("以后再说").findOne(1000),
-        text("跳过").findOne(1000),
-        text("暂不升级").findOne(1000),
-        desc("关闭").findOne(1000),
-        idContains("close").findOne(1000),
-        idContains("iv_close").findOne(1000),
-        idContains("btn_close").findOne(1000),
+        text("关闭").findOne(80),
+        text("确定").findOne(80),
+        text("知道了").findOne(80),
+        text("以后再说").findOne(80),
+        text("跳过").findOne(80),
+        text("暂不升级").findOne(80),
+        desc("关闭").findOne(80),
+        idContains("close").findOne(80),
+        idContains("iv_close").findOne(80),
+        idContains("btn_close").findOne(80),
     ];
 
     for (var i = 0; i < closeButtons.length; i++) {
         var btn = closeButtons[i];
         if (btn) {
+            if (isProtectedCloseButton(btn)) {
+                log("跳过主页面关闭/X按钮: " + (btn.text() || btn.desc() || btn.id()));
+                continue;
+            }
             btn.click();
             log("关闭弹窗: " + (btn.text() || btn.desc() || btn.id()));
-            sleep(1000);
+            sleep(250);
         }
     }
 
     if (textContains("休息一下").exists() || textContains("已学习").exists()) {
-        var continueBtn = text("继续学习").findOne(1000) || text("继续").findOne(1000);
+        var continueBtn = text("继续学习").findOne(120) || text("继续").findOne(120);
         if (continueBtn) {
             continueBtn.click();
-            sleep(1000);
+            sleep(250);
         }
     }
+}
+
+function isProtectedCloseButton(btn) {
+    var act = currentActivity();
+    if (act != "com.nexgen.nsa.MainActivity" && act.indexOf("Menu") < 0) return false;
+
+    var label = btn.text() || btn.desc() || btn.id() || "";
+    var isCloseLike = label.indexOf("关闭") >= 0
+        || label.indexOf("close") >= 0
+        || label.indexOf("Close") >= 0
+        || label == "X"
+        || label == "×"
+        || label == "✗"
+        || label == "✘";
+    if (!isCloseLike) return false;
+
+    var b = btn.bounds();
+    var cx = Math.floor((b.left + b.right) / 2);
+    var cy = Math.floor((b.top + b.bottom) / 2);
+
+    // neo学习页/结果页的左上X是页面退出，不是弹窗关闭。
+    if (cx < device.width * 0.25 && cy < device.height * 0.18) return true;
+
+    // MainActivity里任何close类按钮都保守跳过，避免退出学习流程。
+    return act == "com.nexgen.nsa.MainActivity";
 }
 
 function clickNode(node) {
@@ -351,6 +442,41 @@ function clickNode(node) {
     click(cx, cy);
     sleep(50);
     shell("input tap " + cx + " " + cy, true);
+}
+
+function tapByRatio(xRatio, yRatio) {
+    var x = Math.floor(device.width * xRatio);
+    var y = Math.floor(device.height * yRatio);
+    click(x, y);
+    sleep(50);
+    shell("input tap " + x + " " + y, true);
+    return { x: x, y: y };
+}
+
+function tapOnceByRatio(xRatio, yRatio) {
+    var x = Math.floor(device.width * xRatio);
+    var y = Math.floor(device.height * yRatio);
+    click(x, y);
+    return { x: x, y: y };
+}
+
+function clickNodeOnce(node) {
+    var b = node.bounds();
+    var cx = Math.floor((b.left + b.right) / 2);
+    var cy = Math.floor((b.top + b.bottom) / 2);
+    click(cx, cy);
+    sleep(50);
+    press(cx, cy, 80);
+    return { x: cx, y: cy };
+}
+
+function toArr(collection) {
+    var arr = [];
+    if (!collection) return arr;
+    for (var i = 0; i < collection.length; i++) {
+        arr.push(collection[i]);
+    }
+    return arr;
 }
 
 function findBottomContinueButton() {
@@ -408,20 +534,23 @@ function clickContinueIfExists(useBottomFallback) {
         || idContains("next").findOne(200);
 
     if (cont) {
-        clickNode(cont);
-        log("点击继续");
+        var tapped = clickNodeOnce(cont);
+        log("点击继续 @(" + tapped.x + "," + tapped.y + ")");
         return true;
     }
 
-    // 2. 找底部候选元素
+    if (clickMidScreenContinueIcon()) return true;
+
+    if (useBottomFallback !== true) return false;
+
+    // 2. 只有调用方明确允许时，才找底部候选元素。
+    // level/menu/topic 页底部常有 A2+/返回/导航，不能在全局流程里误当成继续按钮。
     var bottomBtn = findBottomContinueButton();
     if (bottomBtn) {
         clickNode(bottomBtn);
         log("点击底部: " + (bottomBtn.text() || bottomBtn.desc() || bottomBtn.className()));
         return true;
     }
-
-    if (useBottomFallback !== true) return false;
 
     // 3. 纯坐标兜底：扫描底部 20% 区域，戳任意内容
     var allViews = [].concat(
@@ -446,6 +575,79 @@ function clickContinueIfExists(useBottomFallback) {
     return false;
 }
 
+function clickMidScreenContinueIcon() {
+    if (!textContains("The Secret Code").exists()
+        && !textContains("The Crime").exists()
+        && !textContains("Preview").exists()
+        && !textContains("继续").exists()) {
+        return false;
+    }
+
+    var candidates = [].concat(
+        toArr(descContains("继续").find()),
+        toArr(descContains("play").find()),
+        toArr(descContains("Play").find()),
+        toArr(idContains("play").find()),
+        toArr(idContains("resume").find()),
+        toArr(className("android.widget.ImageButton").clickable(true).find()),
+        toArr(className("android.widget.ImageView").clickable(true).find())
+    );
+
+    for (var i = 0; i < candidates.length; i++) {
+        var b = candidates[i].bounds();
+        var cx = Math.floor((b.left + b.right) / 2);
+        var cy = Math.floor((b.top + b.bottom) / 2);
+        if (cx >= device.width * 0.35 && cx <= device.width * 0.65
+            && cy >= device.height * 0.25 && cy <= device.height * 0.58
+            && b.width() >= 40 && b.height() >= 40) {
+            click(cx, cy);
+            sleep(50);
+            press(cx, cy, 80);
+            log("点击中部继续/播放图标 @(" + cx + "," + cy + ")");
+            return true;
+        }
+    }
+
+    // neo-06样式的安全坐标兜底，只点中部播放按钮，不点底部循环/Home。
+    if (textContains("继续").exists()) {
+        var points = [
+            { x: 0.50, y: 0.400 },
+            { x: 0.50, y: 0.385 },
+            { x: 0.50, y: 0.415 },
+        ];
+        for (var p = 0; p < points.length; p++) {
+            var tapped = tapOnceByRatio(points[p].x, points[p].y);
+            sleep(50);
+            press(tapped.x, tapped.y, 80);
+            log("按中部坐标点击继续/播放 @(" + tapped.x + "," + tapped.y + ")");
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function hasCenterResumeLikeButton() {
+    var imgs = [].concat(
+        toArr(className("android.widget.ImageButton").clickable(true).find()),
+        toArr(className("android.widget.ImageView").clickable(true).find()),
+        toArr(idContains("play").find()),
+        toArr(idContains("resume").find())
+    );
+
+    for (var i = 0; i < imgs.length; i++) {
+        var b = imgs[i].bounds();
+        var cx = Math.floor((b.left + b.right) / 2);
+        var cy = Math.floor((b.top + b.bottom) / 2);
+        if (cx >= device.width * 0.35 && cx <= device.width * 0.65
+            && cy >= device.height * 0.25 && cy <= device.height * 0.58
+            && b.width() >= 40 && b.height() >= 40) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function isOnHomePage() {
     return textContains("学习").exists()
         || textContains("首页").exists()
@@ -458,16 +660,19 @@ function findCourseNode(courseName) {
     // 优先精确匹配，避免 "C1" 匹配到 "C1 Bridge"
     var node = null;
     if (courseName == "C1 Bridge" || courseName == "B2+") {
-        node = text(courseName).findOne(1000);
+        node = text(courseName).findOne(180);
     }
-    if (!node && (courseName == "C1" || courseName == "B2")) {
-        // 精确匹配单独的 "C1" 或 "B2"，不匹配包含它们的文字
-        node = textMatches("^\\s*C1\\s*$").findOne(1000)
-            || textMatches("^\\s*B2\\s*$").findOne(1000);
+    if (!node && courseName == "C1") {
+        // 精确匹配单独的 "C1"，不匹配 "C1 Bridge"
+        node = textMatches("^\\s*C1\\s*$").findOne(180);
+    }
+    if (!node && courseName == "B2") {
+        // 精确匹配单独的 "B2"，不匹配 "B2+"
+        node = textMatches("^\\s*B2\\s*$").findOne(180);
     }
     if (!node) {
-        node = text(courseName).findOne(1000)
-            || textContains(courseName).findOne(1000);
+        node = text(courseName).findOne(180)
+            || textContains(courseName).findOne(180);
     }
     return node;
 }
@@ -490,9 +695,9 @@ function findVisibleLevelNodes() {
     var nodes = [];
 
     for (var i = 0; i < known.length; i++) {
-        var node = text(known[i]).findOne(500);
+        var node = text(known[i]).findOne(100);
         if (!node && (known[i] == "C1" || known[i] == "B2")) {
-            node = textMatches("^\\s*" + known[i] + "\\s*$").findOne(500);
+            node = textMatches("^\\s*" + known[i] + "\\s*$").findOne(100);
         }
         if (node) {
             var b = node.bounds();
@@ -504,16 +709,44 @@ function findVisibleLevelNodes() {
     return nodes;
 }
 
+function ensureLearningTarget() {
+    var courses = ["C1 Bridge", "C1", "B2+", "B2"];
+    var isNewTarget = !state.targetCourse;
+    if (!state.targetCourse) {
+        state.targetCourse = courses[Math.floor(Math.random() * courses.length)];
+    }
+    if (!state.targetUnit || state.targetUnit < 1 || state.targetUnit > 4) {
+        state.targetUnit = random(1, 4);
+    }
+    if (isNewTarget || state.topicIndex < 0 || state.topicIndex === undefined || state.topicIndex === null) {
+        state.topicIndex = Math.floor(Math.random() * 4);
+    }
+}
+
+function getLevelTapPoint(courseName) {
+    var points = {
+        "C1 Bridge": { x: 0.50, y: 0.155 },
+        "C1": { x: 0.50, y: 0.285 },
+        "B2+": { x: 0.50, y: 0.415 },
+        "B2": { x: 0.50, y: 0.545 },
+    };
+    return points[courseName] || points["C1 Bridge"];
+}
+
 function isOnLevelPage() {
-    return currentActivity().indexOf("ProMenuActivity") >= 0
-        && findVisibleLevelNodes().length >= 2
+    return currentActivity().indexOf("Menu") >= 0
         && !textContains("Unit").exists()
+        && !textContains("Certification").exists()
+        && !textContains("Mastery Test").exists()
+        && !textContains("Dictations").exists()
+        && !textContains("Focus Exercises").exists()
         && !textContains("The Secret Code").exists();
 }
 
 function handleLevelPage() {
+    ensureLearningTarget();
+
     var nodes = findVisibleLevelNodes();
-    if (nodes.length == 0) return;
 
     var target = null;
     if (state.targetCourse) {
@@ -526,54 +759,55 @@ function handleLevelPage() {
     }
 
     if (!target) {
-        var idx = Math.floor(Math.random() * nodes.length);
-        target = nodes[idx];
-        state.targetCourse = target.name;
-        state.targetUnit = random(1, 4);
-        state.topicIndex = Math.floor(Math.random() * 3);
+        if (nodes.length > 0) {
+            var idx = Math.floor(Math.random() * nodes.length);
+            target = nodes[idx];
+            state.targetCourse = target.name;
+        }
     }
 
     log("Level: " + state.targetCourse + " / Unit" + state.targetUnit + " / topic#" + state.topicIndex);
-    clickNode(target.node);
+    if (target) {
+        clickNode(target.node);
+    } else {
+        var p = getLevelTapPoint(state.targetCourse);
+        var tapped = tapByRatio(p.x, p.y);
+        log("  level文字节点不可见，按截图坐标点击 " + state.targetCourse + " @(" + tapped.x + "," + tapped.y + ")");
+    }
     waitUntil(function () {
-        return currentActivity().indexOf("Menu") < 0 || textContains("Unit").exists();
-    }, 3000);
+        return textContains("Unit").exists() || textContains("Certification").exists();
+    }, 1200);
 }
 
 function enterLearningModule() {
     log("在首页，随机选择level");
 
-    var courses = ["C1 Bridge", "C1", "B2+", "B2"];
-    if (!state.targetCourse) {
-        state.targetCourse = courses[Math.floor(Math.random() * courses.length)];
-        state.targetUnit = random(1, 4);
-        state.topicIndex = Math.floor(Math.random() * 4);
-        log("本轮目标: " + state.targetCourse + " / Unit " + state.targetUnit + " / subject前四随机#" + state.topicIndex);
-    }
+    ensureLearningTarget();
+    log("本轮目标: " + state.targetCourse + " / Unit " + state.targetUnit + " / subject前四随机#" + state.topicIndex);
 
     var course = findCourseNode(state.targetCourse);
     if (course) {
         clickNode(course);
         waitUntil(function () {
             return currentActivity().indexOf("Menu") < 0 || textContains("Unit").exists();
-        }, 3000);
+        }, 1200);
         log("点击课程: " + state.targetCourse);
         return;
     }
 
     var learningEntries = [
-        textContains("我的课程").findOne(1000),
-        textContains("课件").findOne(1000),
-        textContains("开始学习").findOne(1000),
-        textContains("AI练习").findOne(1000),
-        textContains("自主练习").findOne(1000),
+        textContains("我的课程").findOne(120),
+        textContains("课件").findOne(120),
+        textContains("开始学习").findOne(120),
+        textContains("AI练习").findOne(120),
+        textContains("自主练习").findOne(120),
     ];
 
     for (var i = 0; i < learningEntries.length; i++) {
         var entry = learningEntries[i];
         if (entry) {
             clickNode(entry);
-            sleep(800);
+            sleep(300);
             log("点击学习入口: " + (entry.text() || entry.id()));
             return;
         }
@@ -581,7 +815,7 @@ function enterLearningModule() {
 
     log("未找到目标课程，滑动查找");
     swipeUp();
-    sleep(2000);
+    sleep(700);
 }
 
 function isOnLessonPage() {
@@ -644,6 +878,48 @@ function hasTrueFalseButtons() {
         if (/^\s*(True|False|TRUE|FALSE|true|false)\s*[:：]?$/.test(s)) return true;
     }
     return false;
+}
+
+function isAnswerText(s) {
+    if (!s || s.length < 1) return false;
+    if (s == "") return false;
+    if (s.indexOf("The Secret Code") >= 0 || s.indexOf("The Crime") >= 0) return false;
+    if (s.indexOf("Preview") >= 0 || s.indexOf("继续") >= 0 || s.indexOf("退出") >= 0) return false;
+    if (s.indexOf("提交") >= 0 || s.indexOf("确定") >= 0 || s.indexOf("下一") >= 0) return false;
+    if (s.indexOf("Product") >= 0 || s.indexOf("Unit") >= 0) return false;
+    return true;
+}
+
+function collectVisibleAnswerChoices() {
+    var options = [];
+    var seen = {};
+    var texts = className("android.widget.TextView").find();
+
+    for (var i = 0; i < texts.length; i++) {
+        var t = texts[i];
+        var s = (t.text() || "").replace(/^\s+|\s+$/g, "");
+        if (!isAnswerText(s)) continue;
+
+        var p = t.parent();
+        var node = (p && p.clickable()) ? p : t;
+        var b = node.bounds();
+        var textBounds = t.bounds();
+
+        if (b.top < device.height * 0.25 || b.bottom > device.height * 0.82) continue;
+        if (b.width() < device.width * 0.22 || b.height() < 35 || b.height() > 180) continue;
+        if (textBounds.top < device.height * 0.28 || textBounds.top > device.height * 0.80) continue;
+
+        var key = Math.floor(b.left) + "," + Math.floor(b.top) + "," + Math.floor(b.right) + "," + Math.floor(b.bottom);
+        if (seen[key]) continue;
+        seen[key] = true;
+        options.push({ node: node, text: s });
+    }
+
+    return options;
+}
+
+function hasVisibleAnswerChoices() {
+    return collectVisibleAnswerChoices().length >= 2;
 }
 
 function collectClickableTextChoices() {
@@ -729,6 +1005,79 @@ function clickClickableTextChoice() {
     return true;
 }
 
+function clickVisibleAnswerChoice() {
+    var options = collectVisibleAnswerChoices();
+    if (options.length < 2) return false;
+
+    var idx = Math.floor(Math.random() * options.length);
+    var opt = options[idx];
+    var b = opt.node.bounds();
+    var cx = Math.floor((b.left + b.right) / 2);
+    var cy = Math.floor((b.top + b.bottom) / 2);
+
+    log("随机点击可见答案: " + opt.text + " #" + idx + "/" + options.length + " @(" + cx + "," + cy + ")");
+    click(cx, cy);
+    sleep(50);
+    shell("input tap " + cx + " " + cy, true);
+    return true;
+}
+
+function collectOrderedAnswerOptions() {
+    var options = [];
+    var seen = {};
+
+    function addNode(node, label) {
+        if (!node) return;
+        var b = node.bounds();
+        if (b.top < device.height * 0.20 || b.bottom > device.height * 0.90) return;
+        if (b.width() < 40 || b.height() < 25) return;
+        var key = Math.floor(b.left) + "," + Math.floor(b.top) + "," + Math.floor(b.right) + "," + Math.floor(b.bottom);
+        if (seen[key]) return;
+        seen[key] = true;
+        options.push({ node: node, text: label || "", top: b.top, left: b.left });
+    }
+
+    var visible = collectVisibleAnswerChoices();
+    for (var i = 0; i < visible.length; i++) {
+        addNode(visible[i].node, visible[i].text);
+    }
+
+    var clickable = collectClickableTextChoices();
+    for (var c = 0; c < clickable.length; c++) {
+        addNode(clickable[c], clickable[c].text ? clickable[c].text() : "");
+    }
+
+    var labels = collectTextLabelChoices();
+    for (var l = 0; l < labels.length; l++) {
+        addNode(labels[l], labels[l].text ? labels[l].text() : "");
+    }
+
+    var radios = className("android.widget.RadioButton").find();
+    for (var r = 0; r < radios.length; r++) addNode(radios[r], radios[r].text ? radios[r].text() : "");
+
+    var checks = className("android.widget.CheckBox").find();
+    for (var k = 0; k < checks.length; k++) addNode(checks[k], checks[k].text ? checks[k].text() : "");
+
+    options.sort(function (a, b) {
+        if (Math.abs(a.top - b.top) > 20) return a.top - b.top;
+        return a.left - b.left;
+    });
+    return options;
+}
+
+function clickOrderedOption(index) {
+    var options = collectOrderedAnswerOptions();
+    if (options.length == 0) return false;
+
+    var opt = options[index % options.length];
+    var b = opt.node.bounds();
+    var cx = Math.floor((b.left + b.right) / 2);
+    var cy = Math.floor((b.top + b.bottom) / 2);
+    log("按顺序点击选项 #" + index + "/" + options.length + " '" + opt.text + "' @(" + cx + "," + cy + ")");
+    click(cx, cy);
+    return true;
+}
+
 function isOnExercisePage() {
     return textContains("选择").exists()
         || textContains("答案").exists()
@@ -736,6 +1085,8 @@ function isOnExercisePage() {
         || textContains("A").exists()
         || textContains("B").exists()
         || textMatches("^\\s*(True|False|TRUE|FALSE|true|false)\\s*$").exists()
+        || hasBlankSlots()
+        || hasVisibleAnswerChoices()
         || hasTrueFalseButtons()
         || hasClickableTextChoices()
         || hasTextLabelChoices()
@@ -747,28 +1098,82 @@ function hasTextLabelChoices() {
     return collectTextLabelChoices().length >= 2;
 }
 
+function countVisibleBlankSlots() {
+    var count = 0;
+    var seen = {};
+    var texts = className("android.widget.TextView").find();
+
+    for (var i = 0; i < texts.length; i++) {
+        var t = texts[i];
+        var s = t.text() || "";
+        if (s.indexOf("_") < 0) continue;
+
+        var b = t.bounds();
+        if (b.top < device.height * 0.12 || b.bottom > device.height * 0.82) continue;
+        if (b.width() < 20 || b.height() < 10) continue;
+
+        var key = s + "@" + Math.floor(b.left) + "," + Math.floor(b.top);
+        if (seen[key]) continue;
+        seen[key] = true;
+
+        var matches = s.match(/_+/g);
+        if (matches) count += matches.length;
+    }
+
+    return Math.min(count, 8);
+}
+
+function hasBlankSlots() {
+    return countVisibleBlankSlots() > 0;
+}
+
+function clickOrderedForBlankSlots() {
+    var blanks = countVisibleBlankSlots();
+    if (blanks <= 0) return false;
+
+    log("检测到完形填空下划线槽位: " + blanks + " 个，本轮连续按顺序点击前 " + blanks + " 个选项");
+    for (var i = 0; i < blanks; i++) {
+        if (!clickOrderedOption(i)) {
+            log("  第" + (i + 1) + "次顺序选择失败，停止");
+            break;
+        }
+        sleep(450);
+    }
+
+    sleep(500);
+    submitAnswer();
+    sleep(250);
+    return true;
+}
+
 function handleExercise() {
     log("处理练习页面");
 
-    // 1. "继续"按钮优先
-    if (clickContinueIfExists(true)) return;
+    // 1. 只点明确的"继续"文字；练习页底部常有重播按钮，不能启用底部兜底。
+    if (clickContinueIfExists(false)) return;
 
-    // 2. True/False
-    if (clickTrueFalseOption()) { sleep(400); return; }
+    // 2. 完形填空：连续下划线算一个空；有几个空，就按顺序点击前几个选项。
+    if (clickOrderedForBlankSlots()) return;
 
-    // 3. 纯文本选项（有clickable父级，最常见）
-    if (clickClickableTextChoice()) { sleep(400); submitAnswer(); sleep(300); return; }
+    // 3. True/False
+    if (clickTrueFalseOption()) { sleep(180); return; }
 
-    // 4. 纯文字标签（无clickable父级，坐标戳）
-    if (clickTextLabelChoice()) { sleep(400); submitAnswer(); sleep(300); return; }
+    // 4. neo-07 这类大卡片答案：True/False 或任意字符串，看到就随机选。
+    if (clickVisibleAnswerChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 5. ABCD/RadioButton/CheckBox 等标准控件
-    if (clickRandomOption()) { sleep(400); submitAnswer(); sleep(300); return; }
+    // 5. 纯文本选项（有clickable父级，最常见）
+    if (clickClickableTextChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 6. 纯图片选项
-    if (clickImageOption()) { sleep(300); submitAnswer(); sleep(200); return; }
+    // 6. 纯文字标签（无clickable父级，坐标戳）
+    if (clickTextLabelChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 7. 口语/填空 特殊题型
+    // 7. ABCD/RadioButton/CheckBox 等标准控件
+    if (clickRandomOption()) { sleep(180); submitAnswer(); sleep(120); return; }
+
+    // 8. 纯图片选项
+    if (clickImageOption()) { sleep(180); submitAnswer(); sleep(120); return; }
+
+    // 9. 口语/填空 特殊题型
     if (textContains("跟读").exists() || textContains("录音").exists() || textContains("说话").exists()) {
         handleSpeakingExercise(); return;
     }
@@ -776,9 +1181,9 @@ function handleExercise() {
         handleFillBlank(); return;
     }
 
-    // 8. 无匹配 → 滑动
+    // 10. 无匹配 → 滑动
     swipeUp();
-    sleep(800);
+    sleep(350);
 }
 
 function clickTrueFalseOption() {
@@ -787,7 +1192,9 @@ function clickTrueFalseOption() {
 
     for (var i = 0; i < buttons.length; i++) {
         var s = buttons[i].text();
-        if (/^\s*(True|False|TRUE|FALSE|true|false)\s*[:：]?$/.test(s)) {
+        var bb = buttons[i].bounds();
+        if (/^\s*(True|False|TRUE|FALSE|true|false)\s*[:：]?$/.test(s)
+            && bb.top > device.height * 0.25 && bb.bottom < device.height * 0.82) {
             options.push(buttons[i]);
         }
     }
@@ -795,15 +1202,34 @@ function clickTrueFalseOption() {
     if (options.length == 0) {
         var texts = textMatches("^\\s*(True|False|TRUE|FALSE|true|false)\\s*[:：]?$").find();
         for (var j = 0; j < texts.length; j++) {
-            options.push(texts[j]);
+            var tb = texts[j].bounds();
+            if (tb.top > device.height * 0.25 && tb.bottom < device.height * 0.82) {
+                options.push(texts[j]);
+            }
         }
     }
 
-    if (options.length == 0) return false;
+    if (options.length == 0) {
+        if (textContains("The Secret Code").exists() && textContains("The Crime").exists()) {
+            var useTrue = Math.random() < 0.5;
+            var tapped = tapByRatio(useTrue ? 0.26 : 0.74, 0.335);
+            log("True/False文字节点不可见，按截图坐标随机点击 " + (useTrue ? "True" : "False") + " @(" + tapped.x + "," + tapped.y + ")");
+            return true;
+        }
+        return false;
+    }
 
     var idx = Math.floor(Math.random() * options.length);
-    clickNode(options[idx]);
-    log("随机点击True/False: " + (options[idx].text() || idx));
+    var opt = options[idx];
+    var parent = opt.parent();
+    var node = (parent && parent.bounds().width() > opt.bounds().width() * 1.5) ? parent : opt;
+    var b = node.bounds();
+    var cx = Math.floor((b.left + b.right) / 2);
+    var cy = Math.floor((b.top + b.bottom) / 2);
+    click(cx, cy);
+    sleep(50);
+    shell("input tap " + cx + " " + cy, true);
+    log("随机点击True/False: " + (opt.text() || idx) + " @(" + cx + "," + cy + ")");
     return true;
 }
 
@@ -985,16 +1411,16 @@ function handleFillBlank() {
 }
 
 function submitAnswer() {
-    var submitBtn = textContains("提交").findOne(1000)
-        || textContains("确认").findOne(1000)
-        || textContains("确定").findOne(1000)
-        || textContains("下一题").findOne(1000)
-        || idContains("submit").findOne(1000);
+    var submitBtn = textContains("提交").findOne(180)
+        || textContains("确认").findOne(180)
+        || textContains("确定").findOne(180)
+        || textContains("下一题").findOne(180)
+        || idContains("submit").findOne(180);
 
     if (submitBtn) {
         submitBtn.click();
         log("提交答案");
-        sleep(1500);
+        sleep(500);
     }
 }
 
@@ -1002,7 +1428,44 @@ function isOnResultPage() {
     return textContains("得分").exists()
         || textContains("Score").exists()
         || textContains("score").exists()
-        || textContains("成绩").exists();
+        || textContains("成绩").exists()
+        || isOnNeoScorePage();
+}
+
+function isOnNeoScorePage() {
+    if (currentActivity() != "com.nexgen.nsa.MainActivity") return false;
+    if (textContains("Preview").exists() || text("GO").exists()) return false;
+    if (textMatches("^\\s*(True|False|TRUE|FALSE|true|false)\\s*$").exists()) return false;
+
+    var nums = textMatches("^\\s*\\d{2,4}\\s*$").find();
+    for (var i = 0; i < nums.length; i++) {
+        var b = nums[i].bounds();
+        if (b.top >= device.height * 0.08 && b.bottom <= device.height * 0.38
+            && b.width() >= device.width * 0.15 && b.height() >= 60) {
+            return true;
+        }
+    }
+    // neo-08 这类结果页至少有左上关闭X，没有题目选项；有时分数数字不是TextView。
+    return hasTopLeftCloseButton() && !hasVisibleAnswerChoices() && !hasClickableTextChoices();
+}
+
+function hasTopLeftCloseButton() {
+    var closeNodes = [].concat(
+        toArr(text("✗").find()),
+        toArr(text("×").find()),
+        toArr(text("X").find()),
+        toArr(text("✘").find()),
+        toArr(descContains("close").find()),
+        toArr(idContains("close").find())
+    );
+
+    for (var i = 0; i < closeNodes.length; i++) {
+        var b = closeNodes[i].bounds();
+        var cx = Math.floor((b.left + b.right) / 2);
+        var cy = Math.floor((b.top + b.bottom) / 2);
+        if (cx < device.width * 0.25 && cy < device.height * 0.18) return true;
+    }
+    return false;
 }
 
 function findBottomRightHomeButton() {
@@ -1027,7 +1490,7 @@ function findBottomRightHomeButton() {
         var b = candidates[j].bounds();
         var cx = Math.floor((b.left + b.right) / 2);
         var cy = Math.floor((b.top + b.bottom) / 2);
-        if (cx >= device.width * 0.65 && cy >= device.height * 0.75) {
+        if (cx >= device.width * 0.65 && cy >= device.height * 0.72 && cy <= device.height * 0.93) {
             return candidates[j];
         }
     }
@@ -1035,15 +1498,46 @@ function findBottomRightHomeButton() {
     return null;
 }
 
+function tapBottomRightHome() {
+    // neo-08 小房子按钮中心约 x=75%, y=87%。这里扫右下 Home 圆形按钮区域，
+    // 避免设备坐标系、导航栏高度或截图缩放差异导致单点点不中。
+    var absoluteX = Math.floor(device.width * 0.75);
+    var absoluteY = Math.floor(device.width * 1.885);
+    if (absoluteY < device.height * 0.98) {
+        click(absoluteX, absoluteY);
+        sleep(60);
+        press(absoluteX, absoluteY, 80);
+        sleep(120);
+        if (isOnLevelPage() || isOnHomePage() || currentActivity().indexOf("Menu") >= 0) {
+            log("  Home命中 absolute @(" + absoluteX + "," + absoluteY + ")");
+            return;
+        }
+    }
+
+    var xRatios = [0.74, 0.76, 0.78];
+    var yRatios = [0.85, 0.87, 0.89];
+    log("  尝试点击Home区域 device=" + device.width + "x" + device.height);
+    for (var yi = 0; yi < yRatios.length; yi++) {
+        for (var xi = 0; xi < xRatios.length; xi++) {
+            var x = Math.floor(device.width * xRatios[xi]);
+            var y = Math.floor(device.height * yRatios[yi]);
+            click(x, y);
+            sleep(50);
+            press(x, y, 80);
+            sleep(120);
+            if (isOnLevelPage() || isOnHomePage() || currentActivity().indexOf("Menu") >= 0) {
+                log("  Home命中 @(" + x + "," + y + ") ratio=(" + xRatios[xi] + "," + yRatios[yi] + ")");
+                return;
+            }
+        }
+    }
+    log("  Home区域扫点仍未命中");
+}
+
 function handleResultPage() {
     log("处理得分页面，点击右下角Home");
 
-    var homeBtn = findBottomRightHomeButton();
-    if (homeBtn) {
-        clickNode(homeBtn);
-    } else {
-        click(Math.floor(device.width * 0.75), Math.floor(device.height * 0.87));
-    }
+    tapBottomRightHome();
 
     state.targetCourse = "";
     state.targetUnit = random(1, 4);
@@ -1051,7 +1545,7 @@ function handleResultPage() {
     state.topicIndex = 0;
     state.samePageCount = 0;
     log("已回Home，重置下一轮随机目标");
-    sleep(3000);
+    sleep(900);
 }
 
 // ============================================================
@@ -1065,6 +1559,15 @@ function isOnMenuPage() {
         || currentActivity().indexOf("Menu") >= 0;
 }
 
+function isOnUnitListPage() {
+    if (currentActivity().indexOf("Menu") < 0) return false;
+    if (textContains("Certification").exists()) return true;
+    return textMatches("^\\s*Unit\\s*[1-4]\\b.*").exists()
+        && !textContains("Mastery Test").exists()
+        && !textContains("Dictations").exists()
+        && !textContains("Focus Exercises").exists();
+}
+
 function isOnLoadingPage() {
     var act = currentActivity();
     return act.indexOf("ProgressDialog") >= 0
@@ -1074,6 +1577,18 @@ function isOnLoadingPage() {
 function parseTopicNameFromUnitText(s) {
     var m = (s || "").match(/Unit\s*\d+\s*(?:-|\s+)\s*(.+)/);
     return m ? m[1].replace(/^\s+|\s+$/g, "") : "";
+}
+
+function getUnitTapPoint(unitNum) {
+    var yPoints = [0, 0.302, 0.408, 0.518, 0.625];
+    var y = yPoints[unitNum] || yPoints[1];
+    return { x: 0.50, y: y };
+}
+
+function getTopicTapPoint(topicIndex) {
+    var yPoints = [0.400, 0.503, 0.602, 0.705];
+    var idx = topicIndex % yPoints.length;
+    return { x: 0.50, y: yPoints[idx] };
 }
 
 function findTopicNameNearUnit(unitNode) {
@@ -1113,14 +1628,16 @@ function findTopicNameNearUnit(unitNode) {
 function handleMenuPage() {
     log("=== 处理单元列表页 ===");
 
+    ensureLearningTarget();
+
     if (!state.targetUnit || state.targetUnit < 1 || state.targetUnit > 4) {
         state.targetUnit = random(1, 4);
     }
 
     toast("Menu页面，随机戳Unit" + state.targetUnit);
 
-    var target = textContains("Unit " + state.targetUnit).findOne(1500)
-        || textContains("Unit" + state.targetUnit).findOne(1500);
+    var target = textContains("Unit " + state.targetUnit).findOne(180)
+        || textContains("Unit" + state.targetUnit).findOne(180);
 
     if (!target) {
         var units = textMatches("^Unit\\s*[1-4]").find();
@@ -1131,32 +1648,25 @@ function handleMenuPage() {
         }
     }
 
-    if (!target) {
-        log("  找不到Unit 1-4，滑动查找");
-        swipeUp();
-        sleep(2000);
-        return;
+    if (target) {
+        var txt = target.text();
+        state.targetTopicName = parseTopicNameFromUnitText(txt) || findTopicNameNearUnit(target);
+        log("  目标文字: " + txt + " topic=" + state.targetTopicName);
     }
 
-    var b = target.bounds();
-    var cx = Math.floor((b.left + b.right) / 2);
-    var cy = Math.floor((b.top + b.bottom) / 2);
-    var txt = target.text();
-    state.targetTopicName = parseTopicNameFromUnitText(txt) || findTopicNameNearUnit(target);
+    var unitPoint = getUnitTapPoint(state.targetUnit);
+    var tapped = tapOnceByRatio(unitPoint.x, unitPoint.y);
+    log("  单击Unit" + state.targetUnit + "卡片中心 @(" + tapped.x + "," + tapped.y + ")");
+    toast("已戳 Unit" + state.targetUnit);
 
-    log("  目标: " + txt + " @ (" + cx + "," + cy + ") topic=" + state.targetTopicName);
-
-    clickNode(target);
-    toast("已戳 " + txt);
-
-    // 轮询等待离开Menu或进入Topic（最快250ms即检测到跳转）
-    var oldAct = currentActivity();
     var moved = waitUntil(function () {
         var a = currentActivity();
-        if (a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0) return true;
+        if (a.indexOf("BottomSheet") >= 0) return true;
+        if (a.indexOf("Menu") < 0) return true;
         if (isOnTopicPage()) return true;
+        if (!isOnUnitListPage()) return true;
         return false;
-    }, 3000);
+    }, 1500);
 
     var act = currentActivity();
     log("  点击后Activity: " + act + (moved ? " (已跳转)" : ""));
@@ -1164,34 +1674,33 @@ function handleMenuPage() {
     if (moved) {
         if (act.indexOf("ProgressDialog") >= 0) {
             log("  等待loading...");
-            waitActivityGone("android.app.ProgressDialog", 5000);
+            waitActivityGone("android.app.ProgressDialog", 1800);
         }
         return;
     }
 
-    // 没走？shell 再补一刀
-    log("  click无效，补shell tap");
-    shell("input tap " + cx + " " + cy, true);
+    log("  单击无效，再单击一次Unit卡片中心");
+    tapped = tapOnceByRatio(unitPoint.x, unitPoint.y);
 
     moved = waitUntil(function () {
         var a = currentActivity();
-        if (a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0) return true;
+        if (a.indexOf("BottomSheet") >= 0) return true;
+        if (a.indexOf("Menu") < 0) return true;
         if (isOnTopicPage()) return true;
+        if (!isOnUnitListPage()) return true;
         return false;
-    }, 3000);
+    }, 1500);
 
     if (moved) {
-        log("  ★ shell成功");
+        log("  ★ 第二次单击成功");
         if (currentActivity().indexOf("ProgressDialog") >= 0) {
-            waitActivityGone("android.app.ProgressDialog", 5000);
+            waitActivityGone("android.app.ProgressDialog", 1800);
         }
         return;
     }
 
-    // 两招都不行，滑动再试
-    log("  点击无效，滑动");
-    swipeUp();
-    sleep(2000);
+    log("  Unit卡片点击无效，停留等待下一轮重试");
+    sleep(300);
 }
 
 // ============================================================
@@ -1200,8 +1709,8 @@ function handleMenuPage() {
 // ============================================================
 function isOnTopicPage() {
     if (currentActivity().indexOf("Menu") < 0) return false;
-    return textMatches("Unit\\s*\\d+\\s*(-|\\s+)").exists()
-        || hasTopicSubjectText()
+    if (isOnUnitListPage()) return false;
+    return hasTopicSubjectText()
         || textContains("Mastery Test").exists()
         || textContains("Dictations").exists()
         || textContains("Focus Exercises").exists();
@@ -1295,6 +1804,8 @@ function getSubjectText(node) {
 }
 
 function handleTopicPage() {
+    ensureLearningTarget();
+
     log("处理subject列表页，当前随机subjectIndex=" + state.topicIndex);
     toast("Subject #" + state.topicIndex);
 
@@ -1302,13 +1813,17 @@ function handleTopicPage() {
     log("  找到前四subject候选 " + subjects.length + " 个");
 
     if (subjects.length == 0) {
-        log("  找不到subject，滑动查找");
-        swipeUp();
-        sleep(2000);
+        var topicPoint = getTopicTapPoint(state.topicIndex);
+        var tapped = tapByRatio(topicPoint.x, topicPoint.y);
+        log("  找不到subject文字节点，按截图坐标点击subject#" + state.topicIndex + " @(" + tapped.x + "," + tapped.y + ")");
+        waitUntil(function () {
+            var a = currentActivity();
+            return a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0;
+        }, 1200);
         return;
     }
 
-    var idx = state.topicIndex % Math.min(subjects.length, 3);
+    var idx = state.topicIndex % Math.min(subjects.length, 4);
     var el = subjects[idx];
     var subjectText = getSubjectText(el);
     var b = el.bounds();
@@ -1323,7 +1838,7 @@ function handleTopicPage() {
     var moved = waitUntil(function () {
         var a = currentActivity();
         return a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0;
-    }, 2000);
+    }, 1000);
 
     if (moved) { log("  ★ 进入成功"); return; }
 
@@ -1333,7 +1848,7 @@ function handleTopicPage() {
     moved = waitUntil(function () {
         var a = currentActivity();
         return a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0;
-    }, 3000);
+    }, 1000);
 
     if (moved) { log("  ★ shell进入成功"); return; }
 
@@ -1343,13 +1858,13 @@ function handleTopicPage() {
     moved = waitUntil(function () {
         var a = currentActivity();
         return a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0;
-    }, 3000);
+    }, 1000);
 
     if (moved) { log("  ★ press进入成功"); return; }
 
     log("  全部失败，滑动");
     swipeUp();
-    sleep(2000);
+    sleep(700);
 }
 
 // ============================================================
@@ -1358,7 +1873,8 @@ function handleTopicPage() {
 // ============================================================
 function isOnStepSheet() {
     return currentActivity().indexOf("BottomSheet") >= 0
-        || currentActivity().indexOf("bottomsheet") >= 0;
+        || currentActivity().indexOf("bottomsheet") >= 0
+        || (textContains("Select Step").exists() && textContains("Step 1").exists());
 }
 
 function findFirstStepSheetOption() {
@@ -1367,7 +1883,8 @@ function findFirstStepSheetOption() {
     for (var i = 0; i < texts.length; i++) {
         var s = texts[i].text();
         if (!s) continue;
-        if (s.indexOf("Step") >= 0 || s.indexOf("Preview") >= 0 || s.indexOf("Practice") >= 0) {
+        if (s.indexOf("Select Step") >= 0) continue;
+        if (s.indexOf("Step 1") >= 0 || s.indexOf("Preview") >= 0 || s.indexOf("Practice") >= 0) {
             candidates.push(texts[i]);
         }
     }
@@ -1394,23 +1911,24 @@ function handleStepSheet() {
     toast("步骤弹窗→Step1Preview");
 
     // 直接找 "Step 1 Preview" 文字
-    var target = text("Step 1 Preview").findOne(2000);
+    var target = text("Step 1 Preview").findOne(180);
     if (!target) {
-        target = textContains("Preview").findOne(2000);
+        target = textContains("Preview").findOne(180);
     }
     if (!target) {
         target = findFirstStepSheetOption();
     }
     if (!target) {
-        log("  找不到Step选项，等待，不返回");
-        sleep(1000);
+        var tapped = tapByRatio(0.50, 0.530);
+        log("  找不到Step文字节点，按截图坐标点击Step1 @(" + tapped.x + "," + tapped.y + ")");
+        sleep(300);
         return;
     }
 
     log("  找到: " + (target.text() || target.desc() || target.id()));
     clickNode(target);
 
-    sleep(700);
+    sleep(300);
     log("  点击后Activity: " + currentActivity());
 }
 
@@ -1429,41 +1947,49 @@ function handlePreviewPage() {
     state.samePageCount = 0;
 
     // GO 按钮出现就点
-    var goBtn = text("GO").findOne(1500);
+    var goBtn = text("GO").findOne(180);
     if (goBtn) {
         toast("点击GO");
-        goBtn.click();
+        clickNode(goBtn);
         log("  点击GO");
         // 轮询等AutoX弹窗或Activity变化
         waitUntil(function () {
             var a = currentActivity();
             return a.indexOf("ComposeDialog") >= 0 || a.indexOf("AutoX") >= 0 || a.indexOf("MainActivity") < 0;
-        }, 2000);
+        }, 900);
         // 处理AutoX弹窗
         var act2 = currentActivity();
         if (act2.indexOf("ComposeDialog") >= 0 || act2.indexOf("AutoX") >= 0) {
-            var cont = text("继续").findOne(2000);
+            var cont = text("继续").findOne(300);
             if (cont) { cont.click(); log("  处理AutoX弹窗"); }
         }
         return;
     }
 
-    // 还没有GO，轮询等待下载完成（每500ms检查一次，最多等8秒）
+    // 还没有GO，短轮询等待下载完成；如果仍不可见，用截图坐标兜底。
     log("  等待下载/GO...");
     var found = false;
-    for (var i = 0; i < 16; i++) {
-        sleep(500);
+    for (var i = 0; i < 6; i++) {
+        sleep(200);
         if (text("GO").exists()) { found = true; break; }
     }
-    if (found) { log("  GO已出现"); }
+    if (found) {
+        log("  GO已出现");
+        return;
+    }
+
+    if (textContains("Preview").exists()) {
+        var tapped = tapByRatio(0.50, 0.885);
+        log("  GO文字节点不可见，按截图坐标点击GO @(" + tapped.x + "," + tapped.y + ")");
+    }
 }
 
 // ============================================================
 // MainActivity - 完成页（有  但无 Preview 无 GO）
 // ============================================================
 function isOnCompletePage() {
-    // 排除 Preview、GO 和练习页；只有出现明确关闭/完成标记时才当完成页
-    if (textContains("Preview").exists() || text("GO").exists() || isOnExercisePage()) return false;
+    // 排除 Preview/GO；完成页必须优先于练习页判断，避免 neo-08 被误判成练习页。
+    if (textContains("Preview").exists() || text("GO").exists()) return false;
     return text("✗").exists()
         || text("×").exists()
         || text("X").exists()
@@ -1473,35 +1999,22 @@ function isOnCompletePage() {
 }
 
 function handleCompletePage() {
-    log("处理完成页，点✗返回");
-    toast("完成，返回");
+    log("处理完成页，点击右下角Home重新开始");
+    toast("完成，回Home");
 
-    // 尝试找 ✗ / × / X / 关闭 按钮
-    var closeBtn = text("✗").findOne(1000) || text("×").findOne(1000)
-                || text("X").findOne(1000) || text("✘").findOne(1000)
-                || textContains("关闭").findOne(1000)
-                || descContains("close").findOne(1000);
+    tapBottomRightHome();
 
-    if (closeBtn) {
-        var b = closeBtn.bounds();
-        click(Math.floor((b.left + b.right) / 2), Math.floor((b.top + b.bottom) / 2));
-        log("  点击✗关闭");
-    } else {
-        // 找不到就按返回
-        log("  找不到✗，按back");
-        back();
-    }
-
-    // 完成一个topic，进下一个
-    state.topicIndex++;
+    state.targetCourse = "";
+    state.targetUnit = random(1, 4);
+    state.targetTopicName = "";
+    state.topicIndex = 0;
     state.samePageCount = 0;
-    log("  topicIndex -> " + state.topicIndex);
+    log("  已请求回Home，下一轮从level重新开始");
 
-    // 轮询等待回到Topic页或Menu页
     waitUntil(function () {
         var a = currentActivity();
-        return a.indexOf("Menu") >= 0 || a.indexOf("MainActivity") >= 0;
-    }, 3000);
+        return a.indexOf("Menu") >= 0 || isOnLevelPage() || isOnHomePage();
+    }, 1000);
 }
 
 function handleGenericScreen() {
@@ -1515,7 +2028,7 @@ function handleGenericScreen() {
         var b = goBtn.bounds();
         click(Math.floor((b.left + b.right) / 2), Math.floor((b.top + b.bottom) / 2));
         log("  点击GO/Start");
-        sleep(3000);
+        sleep(900);
         return;
     }
 
@@ -1524,7 +2037,7 @@ function handleGenericScreen() {
     if (submit) {
         submit.click();
         log("  点击提交");
-        sleep(2000);
+        sleep(700);
         return;
     }
 
@@ -1537,7 +2050,7 @@ function handleGenericScreen() {
             if (elText && elText.length > 0) {
                 log("  点击按钮: " + elText);
                 el.click();
-                sleep(2000);
+                sleep(700);
                 return;
             }
         } catch (e) {}
@@ -1550,42 +2063,28 @@ function handleGenericScreen() {
         var opt = options[idx];
         log("  随机选: " + opt.text());
         opt.click();
-        sleep(1500);
+        sleep(500);
         return;
     }
 
-    // 5. 找 ✗ 关闭按钮（答题结果页）
-    var closeBtn = text("✗").findOne(500) || text("×").findOne(500)
-                || text("X").findOne(500) || textContains("关闭").findOne(500);
-    if (closeBtn) {
-        closeBtn.click();
-        log("  点击关闭✗");
-        sleep(2000);
-        return;
-    }
+    // 5. 不在通用逻辑里点X/关闭，避免neo-08结果页误退出。
 
     // 6. 尝试坐标戳任何看起来有用的文字
-    var keywords = ["继续", "下一", "确定", "完成", "返回", "Next", "OK", "Done"];
+    var keywords = ["继续", "下一", "确定", "完成", "Next", "OK", "Done"];
     for (var k = 0; k < keywords.length; k++) {
         var el = textContains(keywords[k]).findOne(300);
         if (el) {
             var b = el.bounds();
             click(Math.floor((b.left + b.right) / 2), Math.floor((b.top + b.bottom) / 2));
             log("  坐标戳: " + keywords[k]);
-            sleep(2500);
+            sleep(700);
             return;
         }
     }
 
-    // 7. 实在没辙，每10次循环才按一次返回（降低误伤）
-    if (state.loopCount % 10 === 0) {
-        log("  无可用操作，尝试返回");
-        back();
-        sleep(2000);
-    } else {
-        log("  无可用操作，等待...");
-        sleep(3000);
-    }
+    // 7. 实在没辙也不自动返回，避免误退到上一层。
+    log("  无可用操作，等待下一轮重试");
+    sleep(700);
 }
 
 function recoverFromError() {
@@ -1596,9 +2095,8 @@ function recoverFromError() {
         return;
     }
 
-    back();
-    sleep(2000);
-
+    log("错误恢复: 保持当前页面，等待下一轮重新识别");
+    sleep(700);
     dismissPopups();
 }
 
