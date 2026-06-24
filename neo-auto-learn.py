@@ -100,6 +100,8 @@ def handle_current_screen(d):
         handle_exercise(d)
     elif is_on_result_page(d):
         handle_result_page(d)
+    elif is_on_menu_page(d):
+        handle_menu_page(d)
     else:
         handle_generic_screen(d)
 
@@ -339,6 +341,58 @@ def handle_result_page(d):
             return
 
     d.press("back")
+    time.sleep(2)
+
+
+def is_on_menu_page(d):
+    """单元列表页: ProMenuActivity / 包含 Unit 文字的选择页"""
+    return (d(textContains="Unit").exists(timeout=0.5)
+            or d(textContains="Certification").exists(timeout=0.5)
+            or "Menu" in d.app_current().get("activity", ""))
+
+
+def handle_menu_page(d):
+    print("[单元列表] 选择 Unit 进入")
+
+    # 尝试点击包含 Unit 的文字
+    units = d(textContains="Unit")
+    for i in range(min(units.count, 8)):
+        try:
+            el = units[i]
+            txt = el.get_text()
+            print(f"  尝试点击: {txt}")
+            el.click()
+            time.sleep(2)
+            if "Menu" not in d.app_current().get("activity", ""):
+                print(f"  进入成功: {txt}")
+                return
+        except Exception as e:
+            print(f"  点击失败: {e}")
+
+    # Unit 文字不可点击时尝试父级可点击容器
+    clickable = d(className="android.view.View").clickable(True)
+    if clickable.count == 0:
+        clickable = d(className="android.view.ViewGroup").clickable(True)
+    if clickable.count == 0:
+        clickable = d(className="android.widget.LinearLayout").clickable(True)
+
+    for i in range(min(clickable.count, 10)):
+        try:
+            v = clickable[i]
+            info = v.info
+            text = info.get("text", "") or info.get("contentDescription", "")
+            if "Unit" in text or text:
+                print(f"  尝试点击容器: {text}")
+                v.click()
+                time.sleep(2)
+                if "Menu" not in d.app_current().get("activity", ""):
+                    print("  进入成功")
+                    return
+        except Exception:
+            pass
+
+    print("  未成功进入，尝试滑动")
+    swipe_up(d)
     time.sleep(2)
 
 
