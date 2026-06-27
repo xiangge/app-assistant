@@ -7,6 +7,13 @@ var CONFIG = {
     MAX_RETRY: 3,
     RANDOM_DELAY_MIN: 5,
     RANDOM_DELAY_MAX: 35,
+    WAKE_TOUCH_LOOPS: 0,
+    ACCESSIBILITY_SHORTCUT_LOOPS: 25,
+    STUCK_SCREEN_LOOPS: 32,
+    LEVEL_FAIL_RESTARTS: 3,
+    HARD_RESTART_COOLDOWN_LOOPS: 45,
+    AUTO_SERVICE_REFRESH_LOOPS: 60,
+    RESTART_AFTER_RESULT: true,
 };
 
 var state = {
@@ -16,7 +23,15 @@ var state = {
     lastActionTime: 0,
     topicIndex: 0,       // 当前处理到第几个 topic
     samePageCount: 0,    // 同一页面连续循环次数（用于死循环检测）
+    sameScreenCount: 0,  // 同一屏幕内容连续循环次数
     lastActivity: "",    // 上一次的 Activity
+    lastScreenSignature: "",
+    lastWakeLoop: 0,
+    lastAccessibilityShortcutLoop: -999,
+    lastRecoveryLoop: 0,
+    lastHardRestartLoop: -999,
+    lastAutoRefreshLoop: -999,
+    levelFailCount: 0,
     targetCourse: "",    // 本轮随机 level
     targetUnit: 0,        // 本轮随机 Unit
     targetTopicName: "",  // 从 Unit<x> <topic> 解析出的 topic 名
@@ -87,6 +102,7 @@ function main() {
                 auto();
                 sleep(2000);
             }
+            refreshAutoServiceIfNeeded();
 
             state.loopCount++;
             handleCurrentScreen();
@@ -171,6 +187,22 @@ function handleCurrentScreen() {
         state.lastActivity = act;
     }
 
+    updateScreenSignature(act);
+    if (CONFIG.WAKE_TOUCH_LOOPS > 0
+        && state.sameScreenCount >= CONFIG.WAKE_TOUCH_LOOPS
+        && state.loopCount - state.lastWakeLoop >= CONFIG.WAKE_TOUCH_LOOPS) {
+        gentleWakeTouch();
+    }
+    if (state.sameScreenCount >= CONFIG.ACCESSIBILITY_SHORTCUT_LOOPS
+        && state.loopCount - state.lastAccessibilityShortcutLoop >= CONFIG.ACCESSIBILITY_SHORTCUT_LOOPS) {
+        tapAccessibilityShortcut();
+        return;
+    }
+    if (state.sameScreenCount >= CONFIG.STUCK_SCREEN_LOOPS
+        && state.loopCount - state.lastRecoveryLoop >= CONFIG.STUCK_SCREEN_LOOPS) {
+        if (recoverStuckScreen()) return;
+    }
+
     // AutoX 系统弹窗（继续/退出）
     if (act.indexOf("ComposeDialog") >= 0 || act.indexOf("AutoX") >= 0) {
         handleAutoXDialog();
@@ -204,6 +236,12 @@ function handleCurrentScreen() {
     // 步骤弹窗（BottomSheetDialog）优先处理
     if (isOnStepSheet()) {
         handleStepSheet();
+        return;
+    }
+
+    // neo-01 level页有时回到 MainActivity，不能只按 Activity=Menu 判断。
+    if (isOnLevelPage()) {
+        handleLevelPage();
         return;
     }
 
@@ -280,6 +318,178 @@ function handleCurrentScreen() {
     handleGenericScreen();
 }
 
+function updateScreenSignature(act) {
+    var signature = getScreenSignature(act);
+    if (signature == state.lastScreenSignature) {
+        state.sameScreenCount++;
+    } else {
+        state.sameScreenCount = 0;
+        state.lastScreenSignature = signature;
+    }
+}
+
+function getScreenSignature(act) {
+    var parts = [act];
+    var nodes = className("android.widget.TextView").find();
+    for (var i = 0; i < Math.min(nodes.length, 10); i++) {
+        var t = (nodes[i].text() || "").replace(/\s+/g, " ").trim();
+        if (!t) continue;
+        var b = nodes[i].bounds();
+        parts.push(t + "@" + Math.floor(b.left / 20) + "," + Math.floor(b.top / 20));
+    }
+    return parts.join("|");
+}
+
+function resetLoopTarget(reason) {
+    state.targetCourse = "";
+    state.targetUnit = 0;
+    state.targetTopicName = "";
+    state.topicIndex = 0;
+    state.samePageCount = 0;
+    state.sameScreenCount = 0;
+    state.levelFailCount = 0;
+    state.lastScreenSignature = "";
+    log("重置本轮目标: " + reason);
+}
+
+function refreshAutoServiceIfNeeded() {
+    if (state.loopCount - state.lastAutoRefreshLoop < CONFIG.AUTO_SERVICE_REFRESH_LOOPS) return;
+    state.lastAutoRefreshLoop = state.loopCount;
+
+    try {
+        auto();
+        log("定期刷新AutoX无障碍连接");
+    } catch (e) {
+        log("刷新AutoX无障碍连接失败: " + e.message);
+    }
+}
+
+function hardRestartNeo(reason, force) {
+    if (!force && state.loopCount - state.lastHardRestartLoop < CONFIG.HARD_RESTART_COOLDOWN_LOOPS) {
+        log("跳过硬重启，冷却中: " + reason);
+        resetLoopTarget("硬重启冷却中，先重置目标");
+        return;
+    }
+
+    state.lastHardRestartLoop = state.loopCount;
+    log("硬重启NEO: " + reason);
+    resetLoopTarget("硬重启前清空状态");
+
+    try {
+        shell("am force-stop " + CONFIG.APP_PACKAGE, true);
+        sleep(800);
+    } catch (e) {
+        log("  force-stop失败，继续尝试启动: " + e.message);
+    }
+
+    app.launch(CONFIG.APP_PACKAGE);
+    waitUntil(function () {
+        return currentPackage() == CONFIG.APP_PACKAGE;
+    }, 3000, 150);
+    sleep(1200);
+}
+
+function gentleWakeTouch() {
+    state.lastWakeLoop = state.loopCount;
+
+    var x = Math.floor(device.width * 0.50);
+    var y = Math.floor(device.height * 0.09);
+
+    log("同屏较久，轻触唤醒 @(" + x + "," + y + ")");
+    press(x, y, 35);
+    try {
+        shell("input tap " + x + " " + y, true);
+    } catch (e) {
+        log("  系统tap唤醒失败，已用press兜底: " + e.message);
+    }
+    sleep(180);
+}
+
+function tapAccessibilityShortcut() {
+    state.lastAccessibilityShortcutLoop = state.loopCount;
+
+    // Android 无障碍快捷按钮通常贴在屏幕右下角边缘。这里刻意避开 NEO 的右下 Home
+    // 按钮区域（约 x=75%, y=87%），点更靠右的系统悬浮按钮。
+    var points = [
+        { x: 0.965, y: 0.875 },
+        { x: 0.965, y: 0.820 },
+        { x: 0.940, y: 0.900 },
+    ];
+
+    log("同屏卡住，尝试点击右下无障碍快捷按钮");
+    for (var i = 0; i < points.length; i++) {
+        var x = Math.floor(device.width * points[i].x);
+        var y = Math.floor(device.height * points[i].y);
+        press(x, y, 45);
+        try {
+            shell("input tap " + x + " " + y, true);
+        } catch (e) {
+            log("  无障碍快捷按钮系统tap失败: " + e.message);
+        }
+        sleep(220);
+    }
+
+    // 不清空 sameScreenCount。这个按钮现在只作为一次尝试；
+    // 如果页面仍不变化，下一阶段必须继续进入硬恢复，不能重新计数空转。
+}
+
+function recoverStuckScreen() {
+    state.lastRecoveryLoop = state.loopCount;
+    log("检测到同一屏幕连续 " + state.sameScreenCount + " 轮，执行安全恢复: " + currentActivity());
+
+    if (!currentPackage().equals(CONFIG.APP_PACKAGE)) {
+        launchNeoApp();
+        return true;
+    }
+
+    if (isOnResumeOverlay()) {
+        handleResumeOverlay();
+        state.sameScreenCount = 0;
+        return true;
+    }
+
+    if (isOnResultPage()) {
+        handleResultPage();
+        state.sameScreenCount = 0;
+        return true;
+    }
+
+    if (isOnCompletePage()) {
+        handleCompletePage();
+        state.sameScreenCount = 0;
+        return true;
+    }
+
+    if (isOnPreviewPage()) {
+        handlePreviewPage();
+        state.sameScreenCount = 0;
+        return true;
+    }
+
+    if (isOnLevelPage()) {
+        hardRestartNeo("卡在neo-01 level页，点击level无效");
+        return true;
+    }
+
+    if (isOnUnitListPage() || isOnTopicPage()) {
+        hardRestartNeo("卡在选择流程，重启后从level重新开始");
+        return true;
+    }
+
+    if (clickContinueIfExists()) {
+        state.sameScreenCount = 0;
+        return true;
+    }
+
+    if (clickMidScreenContinueIcon()) {
+        state.sameScreenCount = 0;
+        return true;
+    }
+
+    hardRestartNeo("未知卡屏");
+    return true;
+}
+
 function handleAutoXDialog() {
     var resumeBtn = id("com.nexgen.nsa:id/buttonResume").findOne(200)
         || idContains("buttonResume").findOne(200);
@@ -346,26 +556,40 @@ function handleResumeOverlay() {
         var b = cont.bounds();
         var cx = Math.floor((b.left + b.right) / 2);
         var cy = Math.floor((b.top + b.bottom) / 2);
-        if (cy < device.height * 0.65) {
+        if (cy < device.height * 0.60) {
             click(cx, cy);
             sleep(50);
             press(cx, cy, 80);
             log("  点击继续文字 @(" + cx + "," + cy + ")");
             sleep(250);
-            return;
+            if (!isOnResumeOverlay()) return;
         }
     }
 
-    var points = [
+    // neo-06 上方蓝色播放圆按钮是继续；下面蓝色X是退出，绝对不能点。
+    var absoluteY = Math.floor(device.width * 1.57);
+    var points = [];
+    if (absoluteY < device.height * 0.55) {
+        points.push({ px: Math.floor(device.width * 0.50), py: absoluteY, label: "width-based" });
+    }
+    points = points.concat([
         { x: 0.50, y: 0.400 },
         { x: 0.50, y: 0.385 },
         { x: 0.50, y: 0.415 },
-    ];
+        { x: 0.50, y: 0.365 },
+        { x: 0.50, y: 0.435 },
+    ]);
     for (var i = 0; i < points.length; i++) {
-        var tapped = tapOnceByRatio(points[i].x, points[i].y);
+        var tapped;
+        if (points[i].px !== undefined) {
+            tapped = { x: points[i].px, y: points[i].py };
+            click(tapped.x, tapped.y);
+        } else {
+            tapped = tapOnceByRatio(points[i].x, points[i].y);
+        }
         sleep(50);
         press(tapped.x, tapped.y, 80);
-        log("  继续文字不可点，按截图坐标点击播放按钮 @(" + tapped.x + "," + tapped.y + ")");
+        log("  点击上方继续播放按钮 @(" + tapped.x + "," + tapped.y + ")");
         sleep(120);
         if (!isOnResumeOverlay()) return;
     }
@@ -598,7 +822,7 @@ function clickMidScreenContinueIcon() {
         var cx = Math.floor((b.left + b.right) / 2);
         var cy = Math.floor((b.top + b.bottom) / 2);
         if (cx >= device.width * 0.35 && cx <= device.width * 0.65
-            && cy >= device.height * 0.25 && cy <= device.height * 0.58
+            && cy >= device.height * 0.25 && cy <= device.height * 0.48
             && b.width() >= 40 && b.height() >= 40) {
             click(cx, cy);
             sleep(50);
@@ -610,13 +834,26 @@ function clickMidScreenContinueIcon() {
 
     // neo-06样式的安全坐标兜底，只点中部播放按钮，不点底部循环/Home。
     if (textContains("继续").exists()) {
-        var points = [
+        var absoluteY = Math.floor(device.width * 1.57);
+        var points = [];
+        if (absoluteY < device.height * 0.55) {
+            points.push({ px: Math.floor(device.width * 0.50), py: absoluteY });
+        }
+        points = points.concat([
             { x: 0.50, y: 0.400 },
             { x: 0.50, y: 0.385 },
             { x: 0.50, y: 0.415 },
-        ];
+            { x: 0.50, y: 0.365 },
+            { x: 0.50, y: 0.435 },
+        ]);
         for (var p = 0; p < points.length; p++) {
-            var tapped = tapOnceByRatio(points[p].x, points[p].y);
+            var tapped;
+            if (points[p].px !== undefined) {
+                tapped = { x: points[p].px, y: points[p].py };
+                click(tapped.x, tapped.y);
+            } else {
+                tapped = tapOnceByRatio(points[p].x, points[p].y);
+            }
             sleep(50);
             press(tapped.x, tapped.y, 80);
             log("按中部坐标点击继续/播放 @(" + tapped.x + "," + tapped.y + ")");
@@ -640,7 +877,7 @@ function hasCenterResumeLikeButton() {
         var cx = Math.floor((b.left + b.right) / 2);
         var cy = Math.floor((b.top + b.bottom) / 2);
         if (cx >= device.width * 0.35 && cx <= device.width * 0.65
-            && cy >= device.height * 0.25 && cy <= device.height * 0.58
+            && cy >= device.height * 0.25 && cy <= device.height * 0.48
             && b.width() >= 40 && b.height() >= 40) {
             return true;
         }
@@ -649,6 +886,7 @@ function hasCenterResumeLikeButton() {
 }
 
 function isOnHomePage() {
+    if (isOnNeoScorePage()) return false;
     return textContains("学习").exists()
         || textContains("首页").exists()
         || textContains("我的课程").exists()
@@ -701,7 +939,7 @@ function findVisibleLevelNodes() {
         }
         if (node) {
             var b = node.bounds();
-            if (b.width() > 60 && b.height() > 25) {
+            if (b.width() > 20 && b.height() > 15) {
                 nodes.push({ name: known[i], node: node });
             }
         }
@@ -734,7 +972,10 @@ function getLevelTapPoint(courseName) {
 }
 
 function isOnLevelPage() {
-    return currentActivity().indexOf("Menu") >= 0
+    var hasLevelChoices = findVisibleLevelNodes().length >= 2;
+    var isMenuLike = currentActivity().indexOf("Menu") >= 0 || hasLevelChoices;
+    return isMenuLike
+        && hasLevelChoices
         && !textContains("Unit").exists()
         && !textContains("Certification").exists()
         && !textContains("Mastery Test").exists()
@@ -774,9 +1015,32 @@ function handleLevelPage() {
         var tapped = tapByRatio(p.x, p.y);
         log("  level文字节点不可见，按截图坐标点击 " + state.targetCourse + " @(" + tapped.x + "," + tapped.y + ")");
     }
-    waitUntil(function () {
+    var moved = waitUntil(function () {
         return textContains("Unit").exists() || textContains("Certification").exists();
     }, 1200);
+    if (!moved) {
+        var fallback = getLevelTapPoint(state.targetCourse);
+        var tapped2 = tapByRatio(fallback.x, fallback.y);
+        log("  level点击后未进入Unit，补点坐标 " + state.targetCourse + " @(" + tapped2.x + "," + tapped2.y + ")");
+        moved = waitUntil(function () {
+            return textContains("Unit").exists() || textContains("Certification").exists();
+        }, 1200);
+    }
+    if (moved) {
+        state.levelFailCount = 0;
+        state.sameScreenCount = 0;
+        return;
+    }
+
+    state.levelFailCount++;
+    log("  level连续点击失败 " + state.levelFailCount + "/" + CONFIG.LEVEL_FAIL_RESTARTS);
+    state.targetCourse = "";
+    if (state.levelFailCount == 2) {
+        tapAccessibilityShortcut();
+    }
+    if (state.levelFailCount >= CONFIG.LEVEL_FAIL_RESTARTS) {
+        hardRestartNeo("neo-01连续点击level无效");
+    }
 }
 
 function enterLearningModule() {
@@ -1087,6 +1351,7 @@ function isOnExercisePage() {
         || textMatches("^\\s*(True|False|TRUE|FALSE|true|false)\\s*$").exists()
         || hasBlankSlots()
         || hasVisibleAnswerChoices()
+        || hasMiddleImageOptions()
         || hasTrueFalseButtons()
         || hasClickableTextChoices()
         || hasTextLabelChoices()
@@ -1161,17 +1426,17 @@ function handleExercise() {
     // 4. neo-07 这类大卡片答案：True/False 或任意字符串，看到就随机选。
     if (clickVisibleAnswerChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 5. 纯文本选项（有clickable父级，最常见）
+    // 5. 中间区域图片选项：没有文字选项时，随机点图片。
+    if (clickImageOption()) { sleep(180); submitAnswer(); sleep(120); return; }
+
+    // 6. 纯文本选项（有clickable父级，最常见）
     if (clickClickableTextChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 6. 纯文字标签（无clickable父级，坐标戳）
+    // 7. 纯文字标签（无clickable父级，坐标戳）
     if (clickTextLabelChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 7. ABCD/RadioButton/CheckBox 等标准控件
+    // 8. ABCD/RadioButton/CheckBox 等标准控件
     if (clickRandomOption()) { sleep(180); submitAnswer(); sleep(120); return; }
-
-    // 8. 纯图片选项
-    if (clickImageOption()) { sleep(180); submitAnswer(); sleep(120); return; }
 
     // 9. 口语/填空 特殊题型
     if (textContains("跟读").exists() || textContains("录音").exists() || textContains("说话").exists()) {
@@ -1234,11 +1499,34 @@ function clickTrueFalseOption() {
 }
 
 function clickImageOption() {
+    var options = collectMiddleImageOptions();
+    if (options.length < 2) return false;
+
+    var idx = Math.floor(Math.random() * options.length);
+    var opt = options[idx];
+    var b = opt.bounds();
+    var x = Math.floor((b.left + b.right) / 2);
+    var y = Math.floor((b.top + b.bottom) / 2);
+    click(x, y);
+    log("随机点击中间图片选项 #" + idx + "/" + options.length + " @(" + x + "," + y + ") " + (opt.desc() || ""));
+    return true;
+}
+
+function hasMiddleImageOptions() {
+    return collectMiddleImageOptions().length >= 2;
+}
+
+function collectMiddleImageOptions() {
     var options = [];
     // 收集所有图片选项：clickable ImageView + clickable ImageButton + 带描述的ImageView
     var imgs = [].concat(
         toArr(className("android.widget.ImageView").clickable(true).find()),
-        toArr(className("android.widget.ImageButton").clickable(true).find())
+        toArr(className("android.widget.ImageButton").clickable(true).find()),
+        toArr(className("android.widget.ImageView").find()),
+        toArr(className("android.view.View").clickable(true).find()),
+        toArr(className("android.widget.FrameLayout").clickable(true).find()),
+        toArr(className("android.widget.LinearLayout").clickable(true).find()),
+        toArr(className("android.widget.RelativeLayout").clickable(true).find())
     );
     // 也收集有 contentDescription 的非 clickable ImageView（纯图片选项常靠 desc 标识）
     var descImgs = className("android.widget.ImageView").find();
@@ -1251,22 +1539,21 @@ function clickImageOption() {
     var seen = {};
     for (var i = 0; i < imgs.length; i++) {
         var b = imgs[i].bounds();
-        // 过滤顶部标题栏和底部导航
-        if (b.top < device.height * 0.18 || b.bottom > device.height * 0.88) continue;
-        if (b.width() < 50 || b.height() < 50) continue;
-        var key = Math.floor(b.left) + "," + Math.floor(b.top);
+        // 图片选项可能在上方四分之一到中部；过滤状态栏、底部重播/Home、太小图标。
+        if (b.top < device.height * 0.08 || b.bottom > device.height * 0.78) continue;
+        if (b.width() < 60 || b.height() < 60) continue;
+        if (b.width() > device.width * 0.45 || b.height() > device.height * 0.35) continue;
+        var cx = Math.floor((b.left + b.right) / 2);
+        if (cx < device.width * 0.08 || cx > device.width * 0.92) continue;
+        var cy = Math.floor((b.top + b.bottom) / 2);
+        if (cy < device.height * 0.12 || cy > device.height * 0.70) continue;
+        var key = Math.floor(b.left) + "," + Math.floor(b.top) + "," + Math.floor(b.right) + "," + Math.floor(b.bottom);
         if (seen[key]) continue;
         seen[key] = true;
         options.push(imgs[i]);
     }
 
-    if (options.length < 2) return false;
-
-    // 随机选一个
-    var idx = Math.floor(Math.random() * options.length);
-    clickNode(options[idx]);
-    log("随机点击图片选项 #" + idx + "/" + options.length + " " + (options[idx].desc() || ""));
-    return true;
+    return options;
 }
 
 function clickRandomOption() {
@@ -1508,7 +1795,7 @@ function tapBottomRightHome() {
         sleep(60);
         press(absoluteX, absoluteY, 80);
         sleep(120);
-        if (isOnLevelPage() || isOnHomePage() || currentActivity().indexOf("Menu") >= 0) {
+        if (isOnLevelPage() || isOnUnitListPage() || isOnTopicPage() || currentActivity().indexOf("Menu") >= 0) {
             log("  Home命中 absolute @(" + absoluteX + "," + absoluteY + ")");
             return;
         }
@@ -1525,7 +1812,7 @@ function tapBottomRightHome() {
             sleep(50);
             press(x, y, 80);
             sleep(120);
-            if (isOnLevelPage() || isOnHomePage() || currentActivity().indexOf("Menu") >= 0) {
+            if (isOnLevelPage() || isOnUnitListPage() || isOnTopicPage() || currentActivity().indexOf("Menu") >= 0) {
                 log("  Home命中 @(" + x + "," + y + ") ratio=(" + xRatios[xi] + "," + yRatios[yi] + ")");
                 return;
             }
@@ -1535,7 +1822,12 @@ function tapBottomRightHome() {
 }
 
 function handleResultPage() {
-    log("处理得分页面，点击右下角Home");
+    log("处理得分页面");
+
+    if (CONFIG.RESTART_AFTER_RESULT) {
+        hardRestartNeo("完成一轮后重启，避免长时间运行触摸/无障碍失效", true);
+        return;
+    }
 
     tapBottomRightHome();
 
@@ -1545,7 +1837,10 @@ function handleResultPage() {
     state.topicIndex = 0;
     state.samePageCount = 0;
     log("已回Home，重置下一轮随机目标");
-    sleep(900);
+    waitUntil(function () {
+        return !isOnResultPage()
+            && (isOnLevelPage() || isOnUnitListPage() || currentActivity().indexOf("Menu") >= 0);
+    }, 2000);
 }
 
 // ============================================================
@@ -1999,8 +2294,13 @@ function isOnCompletePage() {
 }
 
 function handleCompletePage() {
-    log("处理完成页，点击右下角Home重新开始");
-    toast("完成，回Home");
+    log("处理完成页");
+    toast("完成，重新开始");
+
+    if (CONFIG.RESTART_AFTER_RESULT) {
+        hardRestartNeo("完成页后重启，避免长时间运行触摸/无障碍失效", true);
+        return;
+    }
 
     tapBottomRightHome();
 
@@ -2013,7 +2313,7 @@ function handleCompletePage() {
 
     waitUntil(function () {
         var a = currentActivity();
-        return a.indexOf("Menu") >= 0 || isOnLevelPage() || isOnHomePage();
+        return !isOnResultPage() && (a.indexOf("Menu") >= 0 || isOnLevelPage() || isOnUnitListPage());
     }, 1000);
 }
 

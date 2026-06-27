@@ -1,8 +1,8 @@
 # app-assistant
 
-neo App 自动学习脚本 - 基于 UI 自动化的安卓端学习助手。
+neo App 自动学习脚本 - 基于 UI 自动化的安卓端学习助手。 本助手采用vibe coding，基于 trea + GLM，CC+DeepSeek 和 Codex。
 
-双版本：**Python 版**（电脑端控制，USB/WiFi 连接）和 **JavaScript 版**（手机端独立运行，AutoJS/AutoX）。当前主要维护的是 `neo-auto-learn.js`。
+双版本：**Python 版(experimental)**（电脑端控制，USB/WiFi 连接）和 **JavaScript 版(In use)**（手机端独立运行，AutoJS/AutoX）。当前主要维护的是 `neo-auto-learn.js`。
 
 ---
 
@@ -31,7 +31,7 @@ app-assistant/
 
 ---
 
-## Python 版：用法
+## Python 版(experimental)：用法
 
 ### 环境准备
 
@@ -64,11 +64,13 @@ python neo-auto-learn.py --debug
 
 ---
 
-## JavaScript 版：用法
+## JavaScript 版(In use)：用法
 
 ### 环境准备
 
 1. 手机安装 **AutoJS/AutoX**（或同类自动化框架）
+   - AutoX.js GitHub: https://github.com/autox-community/AutoX
+   - AutoX.js APK 下载页: https://github.com/autox-community/AutoX/releases
 2. 打开无障碍权限
 3. 允许悬浮窗权限（脚本会显示停止按钮）
 4. 将 `neo-auto-learn.js` 导入 AutoJS/AutoX 运行
@@ -176,9 +178,9 @@ JS 版额外识别：
 
 ## 注意
 
-- 脚本当前**随机选择答案**，不判断正确性，用于刷完成量
+- 脚本当前**随机选择答案**，不判断正确性，用于帮助点击，解放双手，需要自己答题保证准确率
 - 如需智能答题，可后续引入语义分析或 LLM 能力
 - 确保手机屏幕常亮、勿锁屏
 - 部分华为/小米手机需额外关闭「纯净模式」或开启「后台弹出界面」权限
-- AutoJS 的 `click()` 坐标和系统 `input tap` 坐标可能不同；JS 版对关键按钮尽量避免混用坐标系。
+- AutoJS 的 `click()` 坐标和系统 `input tap` 坐标可能不同；JS 版对关键按钮尽量避免混用坐标系， 推荐AutoX.js
 - 如果 neo UI 或屏幕比例变化，优先用截图确认按钮位置，再调整 `neo-auto-learn.js` 中对应的比例坐标。
