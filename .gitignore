@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Node / JavaScript tooling
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local logs and runtime output
+*.log
+logs/
+debug-output/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+

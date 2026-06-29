@@ -22,19 +22,19 @@ state = {
 
 def main():
     print("=" * 50)
-    print("neo 自动学习脚本 (电脑端)")
+    print("neo auto-learning script (desktop controller)")
     print("=" * 50)
 
     d = connect_device()
     if not d:
         return
 
-    print(f"设备信息: {d.info}")
-    print(f"屏幕分辨率: {d.window_size()}")
+    print(f"Device info: {d.info}")
+    print(f"Screen size: {d.window_size()}")
 
     launch_neo_app(d)
 
-    print("\n脚本开始运行，按 Ctrl+C 停止\n")
+    print("\nScript started. Press Ctrl+C to stop.\n")
 
     try:
         while state["is_running"]:
@@ -43,48 +43,48 @@ def main():
                 handle_current_screen(d)
                 random_sleep()
             except Exception as e:
-                print(f"主循环异常: {e}")
+                print(f"Main loop exception: {e}")
                 time.sleep(3)
                 recover_from_error(d)
     except KeyboardInterrupt:
-        print("\n用户手动停止脚本")
+        print("\nScript stopped by user")
 
     elapsed = int((time.time() - state["start_time"]) / 60)
-    print(f"脚本已停止，运行 {elapsed} 分钟，循环 {state['loop_count']} 次")
+    print(f"Script stopped after {elapsed} minutes and {state['loop_count']} loops")
 
 
 def connect_device():
     if len(sys.argv) > 1:
         device_addr = sys.argv[1]
-        print(f"连接设备: {device_addr}")
+        print(f"Connecting to device: {device_addr}")
     else:
-        print("自动检测 USB 连接的设备...")
+        print("Auto-detecting USB-connected device...")
 
     try:
         d = u2.connect() if len(sys.argv) <= 1 else u2.connect(sys.argv[1])
         if d.info:
-            print("设备连接成功!")
+            print("Device connected")
             return d
     except Exception as e:
-        print(f"连接失败: {e}")
-        print("\n请确认:")
-        print("  1. 手机已通过 USB 连接电脑")
-        print("  2. 手机已开启 USB 调试")
-        print("  3. 手机上已允许此电脑的调试授权")
-        print("  4. 电脑已安装 adb (brew install android-platform-tools)")
+        print(f"Connection failed: {e}")
+        print("\nPlease confirm:")
+        print("  1. The phone is connected to the computer over USB")
+        print("  2. USB debugging is enabled on the phone")
+        print("  3. Debugging authorization was accepted on the phone")
+        print("  4. adb is installed on the computer (brew install android-platform-tools)")
         return None
 
 
 def launch_neo_app(d):
-    print("启动 neo 应用...")
+    print("Launching neo app...")
     d.app_start(CONFIG["APP_PACKAGE"])
     time.sleep(5)
 
     current = d.app_current()
     if current.get("package") == CONFIG["APP_PACKAGE"]:
-        print("neo 已启动")
+        print("neo launched")
     else:
-        print("启动失败，尝试再次启动...")
+        print("Launch failed; retrying...")
         d.app_start(CONFIG["APP_PACKAGE"])
         time.sleep(5)
 
@@ -112,14 +112,14 @@ def dismiss_popups(d):
         btn = d(text=txt)
         if btn.exists(timeout=0.3):
             btn.click()
-            print(f"  关闭弹窗: {txt}")
+            print(f"  Closed popup: {txt}")
             time.sleep(0.5)
 
     if d(textContains="休息一下").exists(timeout=0.5):
         continue_btn = d(text="继续学习")
         if continue_btn.exists(timeout=0.5):
             continue_btn.click()
-            print("  关闭休息提醒")
+            print("  Closed break reminder")
             time.sleep(1)
 
 
@@ -132,25 +132,25 @@ def is_on_home_page(d):
 
 
 def enter_learning_module(d):
-    print("[首页] 尝试进入学习模块")
+    print("[Home] Trying to enter learning module")
 
     entry_texts = ["继续学习", "开始学习", "AI练习", "自主练习", "我的课程", "课件"]
     for txt in entry_texts:
         btn = d(textContains=txt)
         if btn.exists(timeout=1):
             btn.click()
-            print(f"  点击入口: {txt}")
+            print(f"  Tapped entry: {txt}")
             time.sleep(2)
             return
 
     course = d(className="android.widget.ImageView").clickable(True)
     if course.exists(timeout=1):
         course.click()
-        print("  点击课程项")
+        print("  Tapped course item")
         time.sleep(2)
         return
 
-    print("  未找到入口，尝试滑动")
+    print("  Entry not found; trying swipe")
     swipe_up(d)
     time.sleep(2)
 
@@ -164,7 +164,7 @@ def is_on_lesson_page(d):
 
 
 def handle_lesson_interaction(d):
-    print("[课时页] 处理课时交互")
+    print("[Lesson] Handling lesson interaction")
 
     try_auto_play(d)
 
@@ -173,12 +173,12 @@ def handle_lesson_interaction(d):
         btn = d(textContains=txt)
         if btn.exists(timeout=0.5):
             btn.click()
-            print(f"  点击: {txt}")
+            print(f"  Tapped: {txt}")
             time.sleep(1.5)
             return
 
     if d(textContains="暂停").exists(timeout=0.5):
-        print("  视频播放中，等待...")
+        print("  Video is playing; waiting...")
         time.sleep(5)
         return
 
@@ -191,7 +191,7 @@ def try_auto_play(d):
     if play_btn.exists(timeout=0.5):
         if not d(textContains="暂停").exists(timeout=0.3):
             play_btn.click()
-            print("  点击播放")
+            print("  Tapped play")
             time.sleep(1)
 
 
@@ -204,7 +204,7 @@ def is_on_exercise_page(d):
 
 
 def handle_exercise(d):
-    print("[练习页] 处理练习题")
+    print("[Exercise] Handling exercise")
 
     if click_random_option(d):
         time.sleep(1)
@@ -256,14 +256,14 @@ def click_random_option(d):
     if options:
         idx = random.randint(0, min(len(options) - 1, 3))
         options[idx].click()
-        print(f"  选择选项 #{idx}")
+        print(f"  Selected option #{idx}")
         return True
 
     return False
 
 
 def handle_speaking_exercise(d):
-    print("  处理口语练习")
+    print("  Handling speaking exercise")
 
     mic_btn = d(resourceIdMatches=".*mic.*")
     if not mic_btn.exists(timeout=1):
@@ -291,7 +291,7 @@ def handle_speaking_exercise(d):
 
 
 def handle_fill_blank(d):
-    print("  处理填空题")
+    print("  Handling fill-in-the-blank exercise")
 
     edit = d(className="android.widget.EditText")
     if edit.exists(timeout=1):
@@ -316,7 +316,7 @@ def submit_answer(d):
         btn = d(textContains=txt)
         if btn.exists(timeout=0.5):
             btn.click()
-            print(f"  点击: {txt}")
+            print(f"  Tapped: {txt}")
             time.sleep(1.5)
             return
 
@@ -329,14 +329,14 @@ def is_on_result_page(d):
 
 
 def handle_result_page(d):
-    print("[结果页] 继续下一课")
+    print("[Result] Continue to next lesson")
 
     continue_texts = ["继续", "下一课", "继续学习", "下一步"]
     for txt in continue_texts:
         btn = d(textContains=txt)
         if btn.exists(timeout=0.5):
             btn.click()
-            print(f"  点击: {txt}")
+            print(f"  Tapped: {txt}")
             time.sleep(2)
             return
 
@@ -345,31 +345,31 @@ def handle_result_page(d):
 
 
 def is_on_menu_page(d):
-    """单元列表页: ProMenuActivity / 包含 Unit 文字的选择页"""
+    """Unit list page: ProMenuActivity or a selection page containing Unit text."""
     return (d(textContains="Unit").exists(timeout=0.5)
             or d(textContains="Certification").exists(timeout=0.5)
             or "Menu" in d.app_current().get("activity", ""))
 
 
 def handle_menu_page(d):
-    print("[单元列表] 选择 Unit 进入")
+    print("[Unit list] Selecting a Unit")
 
-    # 尝试点击包含 Unit 的文字
+    # Try tapping text that contains Unit.
     units = d(textContains="Unit")
     for i in range(min(units.count, 8)):
         try:
             el = units[i]
             txt = el.get_text()
-            print(f"  尝试点击: {txt}")
+            print(f"  Trying tap: {txt}")
             el.click()
             time.sleep(2)
             if "Menu" not in d.app_current().get("activity", ""):
-                print(f"  进入成功: {txt}")
+                print(f"  Entered successfully: {txt}")
                 return
         except Exception as e:
-            print(f"  点击失败: {e}")
+            print(f"  Tap failed: {e}")
 
-    # Unit 文字不可点击时尝试父级可点击容器
+    # If Unit text is not clickable, try the clickable parent/container.
     clickable = d(className="android.view.View").clickable(True)
     if clickable.count == 0:
         clickable = d(className="android.view.ViewGroup").clickable(True)
@@ -382,28 +382,28 @@ def handle_menu_page(d):
             info = v.info
             text = info.get("text", "") or info.get("contentDescription", "")
             if "Unit" in text or text:
-                print(f"  尝试点击容器: {text}")
+                print(f"  Trying container tap: {text}")
                 v.click()
                 time.sleep(2)
                 if "Menu" not in d.app_current().get("activity", ""):
-                    print("  进入成功")
+                    print("  Entered successfully")
                     return
         except Exception:
             pass
 
-    print("  未成功进入，尝试滑动")
+    print("  Could not enter; trying swipe")
     swipe_up(d)
     time.sleep(2)
 
 
 def handle_generic_screen(d):
     current = d.app_current()
-    print(f"[通用] 当前界面: {current.get('activity', 'unknown')}")
+    print(f"[Generic] Current screen: {current.get('activity', 'unknown')}")
 
     if d(textContains="积分").exists(timeout=0.5):
         point_el = d(textMatches=r"\d+")
         if point_el.exists(timeout=0.5):
-            print(f"  积分信息: {point_el.get_text()}")
+            print(f"  Points info: {point_el.get_text()}")
 
     buttons = d(className="android.widget.Button").clickable(True)
     for i in range(buttons.count):
@@ -412,20 +412,20 @@ def handle_generic_screen(d):
             txt = btn.get_text()
             if txt and any(k in txt for k in ["学习", "继续", "开始", "下一", "播放"]):
                 btn.click()
-                print(f"  点击按钮: {txt}")
+                print(f"  Tapped button: {txt}")
                 time.sleep(2)
                 return
         except Exception:
             pass
 
     if state["loop_count"] % 5 == 0:
-        print("  定期返回")
+        print("  Periodic back action")
         d.press("back")
         time.sleep(2)
 
 
 def recover_from_error(d):
-    print("尝试错误恢复...")
+    print("Trying error recovery...")
 
     current = d.app_current()
     if current.get("package") != CONFIG["APP_PACKAGE"]:
@@ -460,17 +460,17 @@ def random_sleep():
 
 def debug_current_screen(d):
     print("\n" + "=" * 50)
-    print("当前界面调试信息")
+    print("Current screen debug info")
     print("=" * 50)
 
     current = d.app_current()
-    print(f"包名: {current.get('package')}")
+    print(f"Package: {current.get('package')}")
     print(f"Activity: {current.get('activity')}")
 
     xml = d.dump_hierarchy()
-    print(f"\n控件树长度: {len(xml)} 字符")
+    print(f"\nUI tree length: {len(xml)} characters")
 
-    print("\n--- 所有文本元素 ---")
+    print("\n--- All text elements ---")
     texts = d(className="android.widget.TextView")
     for i in range(min(texts.count, 30)):
         try:
@@ -480,9 +480,9 @@ def debug_current_screen(d):
                   f"resourceId={info.get('resourceId', '')} "
                   f"bounds={info.get('bounds', '')}")
         except Exception as e:
-            print(f"  [{i}] 读取失败: {e}")
+            print(f"  [{i}] Read failed: {e}")
 
-    print("\n--- 所有按钮 ---")
+    print("\n--- All buttons ---")
     buttons = d(className="android.widget.Button")
     for i in range(min(buttons.count, 15)):
         try:
@@ -492,9 +492,9 @@ def debug_current_screen(d):
                   f"resourceId={info.get('resourceId', '')} "
                   f"bounds={info.get('bounds', '')}")
         except Exception as e:
-            print(f"  [{i}] 读取失败: {e}")
+            print(f"  [{i}] Read failed: {e}")
 
-    print("\n--- 所有可点击 View ---")
+    print("\n--- All clickable Views ---")
     views = d(className="android.view.View").clickable(True)
     for i in range(min(views.count, 15)):
         try:
@@ -505,7 +505,7 @@ def debug_current_screen(d):
                   f"resourceId={info.get('resourceId', '')} "
                   f"bounds={info.get('bounds', '')}")
         except Exception as e:
-            print(f"  [{i}] 读取失败: {e}")
+            print(f"  [{i}] Read failed: {e}")
 
     print("=" * 50 + "\n")
 
@@ -513,7 +513,7 @@ def debug_current_screen(d):
 if __name__ == "__main__":
     if "--debug" in sys.argv:
         d = u2.connect()
-        print("已连接设备，开始调试...")
+        print("Device connected. Starting debug...")
         launch_neo_app(d)
         time.sleep(3)
         debug_current_screen(d)

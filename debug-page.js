@@ -1,4 +1,4 @@
-// 当前界面完整诊断脚本 —— 停在问题页面运行，不点击，只复制控件树摘要
+// Full current-screen diagnostic script. Run it on the problem page; it does not click anything and only copies a UI tree summary.
 auto();
 sleep(500);
 
@@ -76,12 +76,12 @@ function dumpRegion(title, nodes, limit, topRatio) {
 }
 
 try {
-    log2("=== 当前界面完整诊断 ===");
+    log2("=== Current Screen Full Diagnostic ===");
     log2("Package: " + currentPackage());
     log2("Activity: " + currentActivity());
     log2("Device: " + device.width + "x" + device.height);
 
-    dump("关键字候选: 继续/退出/确定/Next/Home", [].concat(
+    dump("Keyword candidates: continue/exit/confirm/Next/Home", [].concat(
         toArr(textContains("继续").find()),
         toArr(textContains("退出").find()),
         toArr(textContains("确定").find()),
@@ -96,21 +96,21 @@ try {
         toArr(idContains("home").find())
     ), 100);
 
-    dumpRegion("下半屏 TextView", toArr(className("android.widget.TextView").find()), 120, 0.45);
-    dumpRegion("下半屏 Button", toArr(className("android.widget.Button").find()), 80, 0.45);
-    dumpRegion("下半屏 ImageButton", toArr(className("android.widget.ImageButton").find()), 80, 0.45);
-    dumpRegion("下半屏 ImageView", toArr(className("android.widget.ImageView").find()), 120, 0.45);
-    dumpRegion("下半屏 clickable View", toArr(className("android.view.View").clickable(true).find()), 120, 0.45);
-    dumpRegion("下半屏 clickable ViewGroup", toArr(className("android.view.ViewGroup").clickable(true).find()), 120, 0.45);
+    dumpRegion("Lower-half TextView", toArr(className("android.widget.TextView").find()), 120, 0.45);
+    dumpRegion("Lower-half Button", toArr(className("android.widget.Button").find()), 80, 0.45);
+    dumpRegion("Lower-half ImageButton", toArr(className("android.widget.ImageButton").find()), 80, 0.45);
+    dumpRegion("Lower-half ImageView", toArr(className("android.widget.ImageView").find()), 120, 0.45);
+    dumpRegion("Lower-half clickable View", toArr(className("android.view.View").clickable(true).find()), 120, 0.45);
+    dumpRegion("Lower-half clickable ViewGroup", toArr(className("android.view.ViewGroup").clickable(true).find()), 120, 0.45);
 
-    dump("全部 TextView", toArr(className("android.widget.TextView").find()), 160);
-    dump("全部 Button", toArr(className("android.widget.Button").find()), 100);
-    dump("全部 ImageButton", toArr(className("android.widget.ImageButton").find()), 100);
-    dump("全部 ImageView", toArr(className("android.widget.ImageView").find()), 160);
-    dump("全部 clickable View", toArr(className("android.view.View").clickable(true).find()), 160);
-    dump("全部 clickable ViewGroup", toArr(className("android.view.ViewGroup").clickable(true).find()), 160);
+    dump("All TextView", toArr(className("android.widget.TextView").find()), 160);
+    dump("All Button", toArr(className("android.widget.Button").find()), 100);
+    dump("All ImageButton", toArr(className("android.widget.ImageButton").find()), 100);
+    dump("All ImageView", toArr(className("android.widget.ImageView").find()), 160);
+    dump("All clickable View", toArr(className("android.view.View").clickable(true).find()), 160);
+    dump("All clickable ViewGroup", toArr(className("android.view.ViewGroup").clickable(true).find()), 160);
 
-    log2("\n--- 坐标参考 ---");
+    log2("\n--- Coordinate Reference ---");
     var pts = [
         [0.5, 0.60], [0.5, 0.65], [0.5, 0.70], [0.5, 0.75], [0.5, 0.80], [0.5, 0.85],
         [0.35, 0.65], [0.65, 0.65], [0.75, 0.87], [0.92, 0.92]
@@ -119,10 +119,10 @@ try {
         log2("(" + pts[i][0] + "w," + pts[i][1] + "h) = (" + Math.floor(device.width * pts[i][0]) + "," + Math.floor(device.height * pts[i][1]) + ")");
     }
 
-    log2("\n完成，已复制到剪贴板");
+    log2("\nDone. Copied to clipboard.");
 } catch (e) {
-    log2("异常: " + e);
+    log2("Exception: " + e);
 }
 
-try { setClip(out.join("\n")); toast("当前界面诊断已复制"); } catch(e) { toast("查看日志"); }
+try { setClip(out.join("\n")); toast("Current screen diagnostic copied"); } catch(e) { toast("Check logs"); }
 sleep(3000);

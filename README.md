@@ -1,186 +1,198 @@
 # app-assistant
 
-neo App 自动学习脚本 - 基于 UI 自动化的安卓端学习助手。 本助手采用vibe coding，基于 trea + GLM，CC+DeepSeek 和 Codex。
+An Android UI automation helper for the neo app. This project was built through vibe coding with trea + GLM, CC + DeepSeek, and Codex.
 
-双版本：**Python 版(experimental)**（电脑端控制，USB/WiFi 连接）和 **JavaScript 版(In use)**（手机端独立运行，AutoJS/AutoX）。当前主要维护的是 `neo-auto-learn.js`。
-
----
-
-## 功能
-
-自动在 neo App（`com.nexgen.nsa`）中模拟用户操作，完成课程学习全流程：
-
-- 识别并关闭弹窗、休息提醒
-- 首页自动找到并进入学习模块
-- 课时页面自动播放并进入下一课
-- 练习页面（选择/判断/口语/填空）自动答题并提交
-- 结果页面自动继续下一轮
-- 随机延迟模拟真人操作节奏
+Two versions are available: the **Python version (experimental)**, which runs from a computer over USB/WiFi, and the **JavaScript version (in use)**, which runs directly on Android through AutoJS/AutoX. The primary maintained script is `neo-auto-learn.js`.
 
 ---
 
-## 目录
+## Features
 
-```
+The scripts automate common neo app (`com.nexgen.nsa`) interactions and aim to reduce repetitive tapping:
+
+- Detect and close popups and break reminders.
+- Find and enter the learning module.
+- Play lesson content and proceed to the next step.
+- Handle exercise pages for choice, true/false, speaking, and fill-in-the-blank tasks. Some answer choices may still require manual judgment for accuracy.
+- Continue to the next round from result pages.
+- Use small randomized delays to mimic a more natural interaction rhythm.
+
+---
+
+## Project Layout
+
+```text
 app-assistant/
 ├── README.md
-├── requirements.txt       # Python 依赖
-├── neo-auto-learn.py      # Python 版，电脑端运行
-└── neo-auto-learn.js      # JS 版，AutoJS 手机端运行
+├── LICENSE
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── requirements.txt       # Python dependencies
+├── examples/              # Reference screenshots for neo pages
+├── neo-auto-learn.py      # Python version, run from a computer
+└── neo-auto-learn.js      # JavaScript version, run on Android with AutoJS/AutoX
 ```
 
 ---
 
-## Python 版(experimental)：用法
+## Python Version (Experimental)
 
-### 环境准备
+### Setup
 
 ```bash
-# 1. 安装依赖
+# 1. Install dependencies
 pip install -r requirements.txt   # uiautomator2>=3.0.0
 
-# 2. 手机 USB 连接电脑，开启 USB 调试
-# 3. 手机上允许此电脑的调试授权
-# 4. 首次运行需安装 agent 到手机
+# 2. Connect the phone over USB and enable USB debugging
+# 3. Allow debugging authorization on the phone
+# 4. Install the uiautomator2 agent on the phone for the first run
 python -m uiautomator2 init
 ```
 
-### 运行
+### Run
 
 ```bash
-# USB 连接（自动检测）
+# USB connection (auto-detected)
 python neo-auto-learn.py
 
-# WiFi 连接（指定设备 IP）
+# WiFi connection (specify device IP)
 python neo-auto-learn.py 192.168.1.100
 
-# 调试模式：打印当前界面控件树，帮助定位问题
+# Debug mode: print the current UI tree for troubleshooting
 python neo-auto-learn.py --debug
 ```
 
-### 停止
+### Stop
 
-按 `Ctrl+C`，脚本会输出本次运行时长和循环次数。
+Press `Ctrl+C`. The script prints the runtime and loop count before exiting.
 
 ---
 
-## JavaScript 版(In use)：用法
+## JavaScript Version (In Use)
 
-### 环境准备
+### Setup
 
-1. 手机安装 **AutoJS/AutoX**（或同类自动化框架）
+1. Install **AutoJS/AutoX** or a compatible automation framework on the phone.
    - AutoX.js GitHub: https://github.com/autox-community/AutoX
-   - AutoX.js APK 下载页: https://github.com/autox-community/AutoX/releases
-2. 打开无障碍权限
-3. 允许悬浮窗权限（脚本会显示停止按钮）
-4. 将 `neo-auto-learn.js` 导入 AutoJS/AutoX 运行
+   - AutoX.js APK releases: https://github.com/autox-community/AutoX/releases
+2. Enable accessibility permission.
+3. Allow floating window permission. The script uses it for the stop button.
+4. Import `neo-auto-learn.js` into AutoJS/AutoX and run it.
 
-### 特性
+### Features
 
-- 顶部悬浮面板显示运行状态和循环次数
-- 点击「停止」按钮随时终止
-- 包名不匹配时自动重试启动
-- 从任意已知页面开始时，会按当前页面继续下一步
+- Shows a small floating panel with runtime status and loop count.
+- Supports stopping at any time through the floating stop button.
+- Retries launching the target package when the foreground package does not match.
+- Can continue from any known page state instead of requiring a fresh app start.
 
-### JS 版当前流程
+### Current JavaScript Flow
 
-脚本按状态机识别当前界面，不依赖必须从首页开始：
+The script uses a state-machine style page detector:
 
-1. `neo-01` level 页：在 `C1 Bridge`、`C1`、`B2+`、`B2` 中随机选一个。
-2. `neo-02` Unit 列表页：在 Unit 1-4 中随机选一个，点击卡片中心。
-3. `neo-03` topic 列表页：在前四个 subject 中随机选一个。
-4. `neo-04` Step 弹窗：选择 `Step 1 Preview`。
-5. `neo-05` Preview 页：点击 `GO`。
-6. `neo-06` 继续/退出覆盖层：只点击中部继续/播放按钮，不碰底部循环/Home。
-7. `neo-07` 练习页：随机选择 `True/False` 或可见字符串选项。
-8. `neo-08` 结果页：点击右侧小房子 Home，回到 level 页开始下一轮。
+1. `neo-01` level page: randomly choose one of `C1 Bridge`, `C1`, `B2+`, or `B2`.
+2. `neo-02` Unit list page: randomly choose Unit 1-4 and tap the card center.
+3. `neo-03` topic list page: randomly choose one of the first four subjects.
+4. `neo-04` Step dialog: choose `Step 1 Preview`.
+5. `neo-05` Preview page: tap `GO`.
+6. `neo-06` continue/exit overlay: tap only the middle continue/play button and avoid bottom replay/Home controls.
+7. `neo-07` exercise page: randomly select `True/False`, visible string choices, or image choices.
+8. `neo-08` result page: restart or return to the level page for the next round.
 
-### JS 版答题规则
+### JavaScript Answer Rules
 
-- `True/False`：随机点击一个。
-- 字符串选项：随机点击一个可见答案卡片。
-- 图片选项：随机点击一个可见图片选项。
-- 普通单选/多选：随机点击可见选项并尝试提交。
-- 完形填空：
-  - 连续下划线算一个空，例如 `___` 是 1 个空。
-  - `_ word _` 是 2 个空。
-  - 有几个空，就在同一次处理循环里按顺序点击前几个选项。
-  - 完形填空点击是单击，选项之间留等待时间，避免被识别成双击。
+- `True/False`: randomly select one option.
+- String choices: randomly tap one visible answer card.
+- Image choices: randomly tap one visible image option.
+- Standard single/multiple choice: randomly tap a visible option and try to submit.
+- Fill-in-the-blank:
+  - Consecutive underscores count as one blank, for example `___` is one blank.
+  - `_ word _` is two blanks.
+  - If there are multiple blanks, the script clicks the first matching options in order during the same handling cycle.
+  - Fill-in-the-blank clicks are single clicks with spacing between options to avoid accidental double-click recognition.
 
-### JS 版防误触策略
+### JavaScript Mis-tap Prevention
 
-- 不在 `MainActivity` 未知状态下随机点底部按钮，避免点到左侧循环按钮。
-- 不在通用逻辑里点击 `X/关闭/返回`，避免退出学习流程。
-- 左上角 `X/close` 不作为弹窗关闭处理。
-- Home 按钮只在结果/完成页处理，优先点击右侧小房子区域。
-- 继续按钮只点击明确的“继续”文字或屏幕中部播放按钮，不点击底部候选。
-
----
-
-## 配置
-
-Python 版 `CONFIG`:
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `APP_PACKAGE` | `com.nexgen.nsa` | 目标应用包名 |
-| `APP_NAME` | `neo` | 应用名称 |
-| `LOOP_INTERVAL` | 2 秒 | 基础循环间隔 |
-| `RANDOM_DELAY_MIN` | 0.8 秒 | 随机延迟下限 |
-| `RANDOM_DELAY_MAX` | 2.5 秒 | 随机延迟上限 |
-| `MAX_RETRY` | 3 | 失败重试次数 |
-
-JS 版 `CONFIG`:
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `APP_PACKAGE` | `com.nexgen.nsa` | 目标应用包名 |
-| `APP_NAME` | `neo` | 应用名称 |
-| `TARGET_POINTS` | `6000` | 目标积分，占位配置 |
-| `LOOP_INTERVAL` | `2000` | 保留配置，当前主循环主要用页面等待和随机短延迟 |
-| `SWIPE_DURATION` | `500` | 滑动时长 |
-| `MAX_RETRY` | `3` | 保留配置 |
-| `RANDOM_DELAY_MIN` | `5` | 每轮随机延迟下限，毫秒 |
-| `RANDOM_DELAY_MAX` | `35` | 每轮随机延迟上限，毫秒 |
+- Unknown `MainActivity` states do not trigger random bottom-button taps, which helps avoid the left replay button.
+- Generic fallback logic does not tap `X`, close, or back controls.
+- Top-left `X/close` controls are treated as page exit buttons, not popup close buttons.
+- Home is handled only on result/completion pages.
+- Continue handling only taps explicit continue text or a middle-screen play button, not arbitrary bottom candidates.
 
 ---
 
-## 运行逻辑
+## Configuration
 
+Python version `CONFIG`:
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `APP_PACKAGE` | `com.nexgen.nsa` | Target app package name |
+| `APP_NAME` | `neo` | App name |
+| `LOOP_INTERVAL` | 2 seconds | Base loop interval |
+| `RANDOM_DELAY_MIN` | 0.8 seconds | Minimum random delay |
+| `RANDOM_DELAY_MAX` | 2.5 seconds | Maximum random delay |
+| `MAX_RETRY` | 3 | Retry count |
+
+JavaScript version `CONFIG`:
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `APP_PACKAGE` | `com.nexgen.nsa` | Target app package name |
+| `APP_NAME` | `neo` | App name |
+| `TARGET_POINTS` | `6000` | Placeholder target score |
+| `LOOP_INTERVAL` | `2000` | Reserved config; current loop mainly uses page waits and short random delays |
+| `SWIPE_DURATION` | `500` | Swipe duration |
+| `MAX_RETRY` | `3` | Reserved config |
+| `RANDOM_DELAY_MIN` | `5` | Minimum delay per loop, in milliseconds |
+| `RANDOM_DELAY_MAX` | `35` | Maximum delay per loop, in milliseconds |
+
+---
+
+## Runtime Logic
+
+```text
+Launch neo -> main loop -> close popups -> detect current page
+                                |
+             +------------------+------------------+
+             |                  |                  |
+           Home              Lesson             Exercise / Result
+        enter module      play / next          answer / continue
+             |                                      |
+             +--------------------------------------+
+                         keep looping
 ```
-启动 neo → 主循环 ──→ 关闭弹窗 ──→ 识别当前页面
-                  │                    │
-                  │    ┌───────────────┴───────────────┐
-                  │    ▼                               ▼
-                  │  首页         课时页       练习页    结果页
-                  │  点入口      播放→下页   随机选题    下一课
-                  │                                   │
-                  └───────────────────────────────────┘
-                        循环继续
-```
 
-各页面识别依据：
+Page detection signals:
 
-- **首页** — "学习""首页""我的课程"等文本或 `home`/`main` 资源 ID
-- **课时页** — "播放""下一课"或 `video`/`player` 资源 ID
-- **练习页** — RadioButton/CheckBox 控件或 "选择""答案""提交" 文本
-- **结果页** — "完成""得分""正确""恭喜" 文本
+- **Home**: localized home/learning text or resource IDs containing `home`/`main`.
+- **Lesson page**: localized play/next-lesson text or resource IDs containing `video`/`player`.
+- **Exercise page**: RadioButton/CheckBox controls or localized choice/answer/submit text.
+- **Result page**: localized completion/score/correct-result text.
 
-JS 版额外识别：
+Additional JavaScript detectors:
 
-- **Level 页** - `ProMenuActivity/Menu` 且没有 Unit/topic 标记。
-- **Unit 列表页** - `Unit 1-4` 或 `Certification Test`。
-- **Topic 页** - `Mastery Test`、`Dictations`、`Focus Exercises` 或已知 topic 文本。
-- **Step 弹窗** - `BottomSheet` 或 `Select Step + Step 1`。
-- **结果页** - 得分文本，或 `neo-08` 这类顶部大数字分数页。
+- **Level page**: `ProMenuActivity/Menu` or visible level choices without Unit/topic markers.
+- **Unit list page**: `Unit 1-4` or `Certification Test`.
+- **Topic page**: `Mastery Test`, `Dictations`, `Focus Exercises`, or known topic text.
+- **Step dialog**: `BottomSheet` or `Select Step + Step 1`.
+- **Result page**: score text or a `neo-08` style page with a large top score.
 
 ---
 
-## 注意
+## Notes
 
-- 脚本当前**随机选择答案**，不判断正确性，用于帮助点击，解放双手，需要自己答题保证准确率
-- 如需智能答题，可后续引入语义分析或 LLM 能力
-- 确保手机屏幕常亮、勿锁屏
-- 部分华为/小米手机需额外关闭「纯净模式」或开启「后台弹出界面」权限
-- AutoJS 的 `click()` 坐标和系统 `input tap` 坐标可能不同；JS 版对关键按钮尽量避免混用坐标系， 推荐AutoX.js
-- 如果 neo UI 或屏幕比例变化，优先用截图确认按钮位置，再调整 `neo-auto-learn.js` 中对应的比例坐标。
+- The script currently selects answers randomly. It is intended to reduce tapping, not to guarantee correct answers.
+- Smart answering could be added later with semantic analysis or LLM support.
+- Keep the phone screen awake and unlocked.
+- Some Huawei/Xiaomi devices may require disabling strict app-install modes or enabling background popup permissions.
+- AutoJS `click()` coordinates and system `input tap` coordinates can differ. The JavaScript version tries to avoid mixing coordinate systems on critical controls. AutoX.js is recommended.
+- If the neo UI or screen ratio changes, use screenshots to confirm button positions and then adjust the corresponding ratio coordinates in `neo-auto-learn.js`.
+
+---
+
+## Open Source
+
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+
+Issues and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before contributing. For security or privacy-sensitive reports, see [SECURITY.md](SECURITY.md).

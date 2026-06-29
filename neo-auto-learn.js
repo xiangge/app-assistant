@@ -21,10 +21,10 @@ var state = {
     loopCount: 0,
     startTime: Date.now(),
     lastActionTime: 0,
-    topicIndex: 0,       // 当前处理到第几个 topic
-    samePageCount: 0,    // 同一页面连续循环次数（用于死循环检测）
-    sameScreenCount: 0,  // 同一屏幕内容连续循环次数
-    lastActivity: "",    // 上一次的 Activity
+    topicIndex: 0,       // Current topic index
+    samePageCount: 0,    // Consecutive loops on the same Activity
+    sameScreenCount: 0,  // Consecutive loops with the same screen signature
+    lastActivity: "",    // Previous Activity
     lastScreenSignature: "",
     lastWakeLoop: 0,
     lastAccessibilityShortcutLoop: -999,
@@ -32,12 +32,12 @@ var state = {
     lastHardRestartLoop: -999,
     lastAutoRefreshLoop: -999,
     levelFailCount: 0,
-    targetCourse: "",    // 本轮随机 level
-    targetUnit: 0,        // 本轮随机 Unit
-    targetTopicName: "",  // 从 Unit<x> <topic> 解析出的 topic 名
+    targetCourse: "",    // Random level for the current round
+    targetUnit: 0,        // Random Unit for the current round
+    targetTopicName: "",  // Topic name parsed from Unit<x> <topic>
 };
 
-// 轮询等待：每 step ms 检查条件，满足立即返回，超时返回 false
+// Polling wait: check every step ms, return immediately on success, false on timeout
 function waitUntil(checkFn, maxMs, step) {
     step = step || 120;
     for (var elapsed = 0; elapsed < maxMs; elapsed += step) {
@@ -47,7 +47,7 @@ function waitUntil(checkFn, maxMs, step) {
     return false;
 }
 
-// 等待 Activity 改变（离开指定 Activity）
+// Wait for Activity to change away from the given Activity
 function waitActivityGone(oldAct, maxMs) {
     maxMs = maxMs || 3000;
     return waitUntil(function () {
@@ -56,7 +56,7 @@ function waitActivityGone(oldAct, maxMs) {
     }, maxMs);
 }
 
-// 等待 Activity 变为包含某个关键词
+// Wait for Activity to contain a keyword
 function waitActivityContains(keyword, maxMs) {
     maxMs = maxMs || 3000;
     return waitUntil(function () {
@@ -65,40 +65,40 @@ function waitActivityContains(keyword, maxMs) {
 }
 
 function main() {
-    // 1. 请求无障碍权限并启用服务（比 auto.waitFor() 更可靠）
+    // 1. Request accessibility permission and enable the service; more reliable than auto.waitFor()
     auto();
-    log("无障碍服务已启用");
+    log("Accessibility service enabled");
 
-    // 2. 请求悬浮窗权限（控制面板需要）
+    // 2. Request floating window permission for the control panel
     if (!floaty.checkPermission()) {
-        toast("请授予悬浮窗权限");
+        toast("Please grant floating window permission");
         floaty.requestPermission();
         sleep(2000);
     }
 
-    // ★ 删掉 requestScreenCapture(false) —— 本脚本只用 text().findOne()，
-    // 走的是无障碍服务，不需要截屏。截屏权限弹窗会导致脚本卡死。
+    // requestScreenCapture(false) was removed. This script only uses text().findOne().
+    // It works through accessibility and does not need screenshots; the screenshot permission dialog can block the script.
 
-    // 3. 显示控制面板
+    // 3. Show control panel
     showControlPanel();
 
-    // 4. 启动 neo 前先确认无障碍服务仍存活
-    log("当前无障碍服务状态: " + auto.service);
+    // 4. Confirm accessibility service is still alive before launching neo
+    log("Current accessibility service state: " + auto.service);
     if (!auto.service) {
-        toast("无障碍服务未连接，请确认已开启 AutoX 无障碍权限");
+        toast("Accessibility service is not connected. Make sure AutoX accessibility permission is enabled");
         sleep(3000);
         auto();
     }
 
-    // 5. 启动 neo
+    // 5. Launch neo
     launchNeoApp();
 
-    // 6. 主循环——每隔一定时间检查无障碍服务是否存活
+    // 6. Main loop: periodically check whether accessibility service is alive
     while (state.isRunning) {
         try {
-            // 无障碍服务断开时自动重连
+            // Reconnect automatically when the accessibility service disconnects
             if (!auto.service) {
-                log("无障碍服务断开，尝试重连...");
+                log("Accessibility service disconnected; trying to reconnect...");
                 auto();
                 sleep(2000);
             }
@@ -108,20 +108,20 @@ function main() {
             handleCurrentScreen();
             randomSleep();
         } catch (e) {
-            log("主循环异常: " + e.message);
+            log("Main loop exception: " + e.message);
             sleep(3000);
             recoverFromError();
         }
     }
 
-    toast("脚本已停止");
+    toast("Script stopped");
 }
 
 function showControlPanel() {
     var window = floaty.window(
         <vertical padding="8">
-            <text id="status" textSize="12sp" textColor="#ffffff" bg="#88000000" padding="4">运行中...</text>
-            <button id="btnStop" textSize="10sp" text="停止" w="60" h="30"/>
+            <text id="status" textSize="12sp" textColor="#ffffff" bg="#88000000" padding="4">Running...</text>
+            <button id="btnStop" textSize="10sp" text="Stop" w="60" h="30"/>
         </vertical>
     );
 
@@ -134,7 +134,7 @@ function showControlPanel() {
         while (state.isRunning) {
             ui.run(function () {
                 var elapsed = Math.floor((Date.now() - state.startTime) / 60000);
-                window.status.setText("运行:" + elapsed + "分 循环:" + state.loopCount);
+                window.status.setText("Running:" + elapsed + " min loops:" + state.loopCount);
             });
             sleep(5000);
         }
@@ -142,34 +142,34 @@ function showControlPanel() {
 }
 
 function launchNeoApp() {
-    log("启动 neo 应用...");
+    log("Launching neo app...");
 
     if (currentPackage() != CONFIG.APP_PACKAGE) {
-        // 直接用包名启动（比 app.launchApp 按名称更可靠）
+        // Launch by package name; more reliable than app.launchApp by app name
         app.launch(CONFIG.APP_PACKAGE);
         waitUntil(function () {
             return currentPackage() == CONFIG.APP_PACKAGE;
         }, 1800, 100);
     }
 
-    // 检查是否启动成功
+    // Check whether launch succeeded
     var pkg = currentPackage();
-    log("当前前台包名: " + pkg);
+    log("Current foreground package: " + pkg);
 
     if (pkg == CONFIG.APP_PACKAGE) {
-        log("neo 已启动成功");
+        log("neo launched successfully");
     } else {
-        // 重试一次
-        log("首次启动未成功，重试...");
+        // Retry once
+        log("Initial launch failed; retrying...");
         app.launch(CONFIG.APP_PACKAGE);
         waitUntil(function () {
             return currentPackage() == CONFIG.APP_PACKAGE;
         }, 2500, 120);
         pkg = currentPackage();
         if (pkg == CONFIG.APP_PACKAGE) {
-            log("重试成功");
+            log("Retry succeeded");
         } else {
-            log("启动失败，当前包名: " + pkg + "，请手动打开 neo");
+            log("Launch failed; current package: " + pkg + "; please open neo manually");
             sleep(2000);
         }
     }
@@ -178,7 +178,7 @@ function launchNeoApp() {
 function handleCurrentScreen() {
     dismissPopups();
 
-    // 跟踪同一页面连续循环次数
+    // Track consecutive loops on the same Activity
     var act = currentActivity();
     if (act == state.lastActivity) {
         state.samePageCount++;
@@ -203,74 +203,74 @@ function handleCurrentScreen() {
         if (recoverStuckScreen()) return;
     }
 
-    // AutoX 系统弹窗（继续/退出）
+    // AutoX system dialog: continue/exit
     if (act.indexOf("ComposeDialog") >= 0 || act.indexOf("AutoX") >= 0) {
         handleAutoXDialog();
         return;
     }
 
-    // neo-06: 学习开始后的继续/退出覆盖层，必须优先点继续，避免通用逻辑误点退出。
+    // neo-06: continue/exit overlay after learning starts. Handle continue first to avoid generic logic tapping exit.
     if (isOnResumeOverlay()) {
         handleResumeOverlay();
         return;
     }
 
-    // 得分页优先处理，避免被“继续”抢先点击
+    // Handle score/result pages first so they are not intercepted by continue logic
     if (isOnResultPage()) {
         handleResultPage();
         return;
     }
 
-    // 学习过程中出现“继续”就直接点
+    // Tap continue directly when it appears during learning
     if (clickContinueIfExists()) {
         return;
     }
 
-    // loading 中直接等
+    // Wait while loading
     if (isOnLoadingPage()) {
-        log("加载中，等待...");
+        log("Loading; waiting...");
         sleep(800);
         return;
     }
 
-    // 步骤弹窗（BottomSheetDialog）优先处理
+    // Handle step dialogs (BottomSheetDialog) first
     if (isOnStepSheet()) {
         handleStepSheet();
         return;
     }
 
-    // neo-01 level页有时回到 MainActivity，不能只按 Activity=Menu 判断。
+    // neo-01 level page can return under MainActivity; do not rely only on Activity=Menu.
     if (isOnLevelPage()) {
         handleLevelPage();
         return;
     }
 
-    // MainActivity 的子页面（Preview/GO、学习中、完成）
+    // MainActivity subpages: Preview/GO, learning, completion
     if (act == "com.nexgen.nsa.MainActivity") {
         if (isOnResultPage()) {
             handleResultPage();
             return;
         }
-        // Preview页：有Preview文字或GO按钮（优先，避免误判成完成页）
+        // Preview page: Preview text or GO button; keep this before completion detection.
         if (isOnPreviewPage()) {
             handlePreviewPage();
             return;
         }
-        // 完成页：一旦出现就优先回Home，避免被练习页/兜底逻辑误判后点到重播或X。
+        // Completion page: handle immediately to avoid exercise/fallback logic tapping replay or X.
         if (isOnCompletePage()) {
             handleCompletePage();
             return;
         }
-        // 练习/选择页：优先处理，避免被标题 The Secret Code 误判成完成页
+        // Exercise/choice page: handle early to avoid treating The Secret Code title as completion.
         if (isOnExercisePage()) {
             handleExercise();
             return;
         }
-        // MainActivity 未知状态不点底部兜底/随机按钮，避免误点neo-08左侧循环按钮。
+        // Unknown MainActivity state: do not use bottom/random fallback, to avoid the neo-08 left replay button.
         if (clickMidScreenContinueIcon()) {
             return;
         }
-        log("  MainActivity未知状态，等待下一轮重新识别");
+        log("  Unknown MainActivity state; waiting for next recognition loop");
         sleep(500);
         return;
     }
@@ -349,7 +349,7 @@ function resetLoopTarget(reason) {
     state.sameScreenCount = 0;
     state.levelFailCount = 0;
     state.lastScreenSignature = "";
-    log("重置本轮目标: " + reason);
+    log("Reset current round target: " + reason);
 }
 
 function refreshAutoServiceIfNeeded() {
@@ -358,28 +358,28 @@ function refreshAutoServiceIfNeeded() {
 
     try {
         auto();
-        log("定期刷新AutoX无障碍连接");
+        log("Periodic AutoX accessibility refresh");
     } catch (e) {
-        log("刷新AutoX无障碍连接失败: " + e.message);
+        log("AutoX accessibility refresh failed: " + e.message);
     }
 }
 
 function hardRestartNeo(reason, force) {
     if (!force && state.loopCount - state.lastHardRestartLoop < CONFIG.HARD_RESTART_COOLDOWN_LOOPS) {
-        log("跳过硬重启，冷却中: " + reason);
-        resetLoopTarget("硬重启冷却中，先重置目标");
+        log("Skip hard restart; cooldown active: " + reason);
+        resetLoopTarget("Hard restart cooldown active; reset target first");
         return;
     }
 
     state.lastHardRestartLoop = state.loopCount;
-    log("硬重启NEO: " + reason);
-    resetLoopTarget("硬重启前清空状态");
+    log("Hard restart NEO: " + reason);
+    resetLoopTarget("Clear state before hard restart");
 
     try {
         shell("am force-stop " + CONFIG.APP_PACKAGE, true);
         sleep(800);
     } catch (e) {
-        log("  force-stop失败，继续尝试启动: " + e.message);
+        log("  force-stop failed; still trying to launch: " + e.message);
     }
 
     app.launch(CONFIG.APP_PACKAGE);
@@ -395,12 +395,12 @@ function gentleWakeTouch() {
     var x = Math.floor(device.width * 0.50);
     var y = Math.floor(device.height * 0.09);
 
-    log("同屏较久，轻触唤醒 @(" + x + "," + y + ")");
+    log("Same screen for a while; gentle wake touch @(" + x + "," + y + ")");
     press(x, y, 35);
     try {
         shell("input tap " + x + " " + y, true);
     } catch (e) {
-        log("  系统tap唤醒失败，已用press兜底: " + e.message);
+        log("  System tap wake failed; press fallback was used: " + e.message);
     }
     sleep(180);
 }
@@ -408,15 +408,15 @@ function gentleWakeTouch() {
 function tapAccessibilityShortcut() {
     state.lastAccessibilityShortcutLoop = state.loopCount;
 
-    // Android 无障碍快捷按钮通常贴在屏幕右下角边缘。这里刻意避开 NEO 的右下 Home
-    // 按钮区域（约 x=75%, y=87%），点更靠右的系统悬浮按钮。
+    // Android accessibility shortcut is usually near the lower-right edge. Avoid NEO's lower-right Home
+    // area around x=75%, y=87%, and tap the system floating button farther right.
     var points = [
         { x: 0.965, y: 0.875 },
         { x: 0.965, y: 0.820 },
         { x: 0.940, y: 0.900 },
     ];
 
-    log("同屏卡住，尝试点击右下无障碍快捷按钮");
+    log("Same screen stuck; trying lower-right accessibility shortcut");
     for (var i = 0; i < points.length; i++) {
         var x = Math.floor(device.width * points[i].x);
         var y = Math.floor(device.height * points[i].y);
@@ -424,18 +424,18 @@ function tapAccessibilityShortcut() {
         try {
             shell("input tap " + x + " " + y, true);
         } catch (e) {
-            log("  无障碍快捷按钮系统tap失败: " + e.message);
+            log("  Accessibility shortcut system tap failed: " + e.message);
         }
         sleep(220);
     }
 
-    // 不清空 sameScreenCount。这个按钮现在只作为一次尝试；
-    // 如果页面仍不变化，下一阶段必须继续进入硬恢复，不能重新计数空转。
+    // Do not clear sameScreenCount. This button is now only a single attempt;
+    // if the page does not change, the next stage must continue to hard recovery instead of restarting the counter.
 }
 
 function recoverStuckScreen() {
     state.lastRecoveryLoop = state.loopCount;
-    log("检测到同一屏幕连续 " + state.sameScreenCount + " 轮，执行安全恢复: " + currentActivity());
+    log("Detected the same screen for " + state.sameScreenCount + " loops; running safe recovery: " + currentActivity());
 
     if (!currentPackage().equals(CONFIG.APP_PACKAGE)) {
         launchNeoApp();
@@ -467,12 +467,12 @@ function recoverStuckScreen() {
     }
 
     if (isOnLevelPage()) {
-        hardRestartNeo("卡在neo-01 level页，点击level无效");
+        hardRestartNeo("Stuck on neo-01 level page; level taps are ineffective");
         return true;
     }
 
     if (isOnUnitListPage() || isOnTopicPage()) {
-        hardRestartNeo("卡在选择流程，重启后从level重新开始");
+        hardRestartNeo("Stuck in selection flow; restart and begin from level page");
         return true;
     }
 
@@ -486,7 +486,7 @@ function recoverStuckScreen() {
         return true;
     }
 
-    hardRestartNeo("未知卡屏");
+    hardRestartNeo("Unknown stuck screen");
     return true;
 }
 
@@ -495,7 +495,7 @@ function handleAutoXDialog() {
         || idContains("buttonResume").findOne(200);
     if (resumeBtn) {
         clickNode(resumeBtn);
-        log("  处理AutoX弹窗: 点击继续icon buttonResume");
+        log("  Handled AutoX dialog: tapped continue icon buttonResume");
         sleep(500);
         return;
     }
@@ -509,7 +509,7 @@ function handleAutoXDialog() {
     if (cont) {
         var b = cont.bounds();
         click(Math.floor((b.left + b.right) / 2), Math.max(0, b.top - 120));
-        log("  处理AutoX弹窗: 根据继续文字点击上方icon");
+        log("  Handled AutoX dialog: tapped icon above continue text");
         sleep(500);
         return;
     }
@@ -528,9 +528,9 @@ function handleAutoXDialog() {
             return a.bounds().top - b.bounds().top;
         });
         clickNode(candidates[0]);
-        log("  处理AutoX弹窗: 点击上方非退出按钮");
+        log("  Handled AutoX dialog: tapped upper non-exit button");
     } else {
-        log("  处理AutoX弹窗: 无按钮文本，等待下一轮，不自动返回");
+        log("  AutoX dialog has no button text; wait for next loop without auto-back");
     }
     sleep(500);
 }
@@ -545,7 +545,7 @@ function isOnResumeOverlay() {
 }
 
 function handleResumeOverlay() {
-    log("处理neo继续/退出覆盖层，点击继续");
+    log("Handling neo continue/exit overlay; tapping continue");
 
     var cont = text("继续").findOne(300)
         || textContains("继续").findOne(300)
@@ -560,13 +560,13 @@ function handleResumeOverlay() {
             click(cx, cy);
             sleep(50);
             press(cx, cy, 80);
-            log("  点击继续文字 @(" + cx + "," + cy + ")");
+            log("  Tapped continue text @(" + cx + "," + cy + ")");
             sleep(250);
             if (!isOnResumeOverlay()) return;
         }
     }
 
-    // neo-06 上方蓝色播放圆按钮是继续；下面蓝色X是退出，绝对不能点。
+    // In neo-06, the upper blue play circle is continue; the lower blue X is exit and must never be tapped.
     var absoluteY = Math.floor(device.width * 1.57);
     var points = [];
     if (absoluteY < device.height * 0.55) {
@@ -589,7 +589,7 @@ function handleResumeOverlay() {
         }
         sleep(50);
         press(tapped.x, tapped.y, 80);
-        log("  点击上方继续播放按钮 @(" + tapped.x + "," + tapped.y + ")");
+        log("  Tapped upper continue/play button @(" + tapped.x + "," + tapped.y + ")");
         sleep(120);
         if (!isOnResumeOverlay()) return;
     }
@@ -614,11 +614,11 @@ function dismissPopups() {
         var btn = closeButtons[i];
         if (btn) {
             if (isProtectedCloseButton(btn)) {
-                log("跳过主页面关闭/X按钮: " + (btn.text() || btn.desc() || btn.id()));
+                log("Skip main-page close/X button: " + (btn.text() || btn.desc() || btn.id()));
                 continue;
             }
             btn.click();
-            log("关闭弹窗: " + (btn.text() || btn.desc() || btn.id()));
+            log("Closed popup: " + (btn.text() || btn.desc() || btn.id()));
             sleep(250);
         }
     }
@@ -650,10 +650,10 @@ function isProtectedCloseButton(btn) {
     var cx = Math.floor((b.left + b.right) / 2);
     var cy = Math.floor((b.top + b.bottom) / 2);
 
-    // neo学习页/结果页的左上X是页面退出，不是弹窗关闭。
+    // Top-left X on neo learning/result pages exits the page; it is not a popup close.
     if (cx < device.width * 0.25 && cy < device.height * 0.18) return true;
 
-    // MainActivity里任何close类按钮都保守跳过，避免退出学习流程。
+    // Conservatively skip close-like buttons in MainActivity to avoid leaving the learning flow.
     return act == "com.nexgen.nsa.MainActivity";
 }
 
@@ -662,7 +662,7 @@ function clickNode(node) {
     var cx = Math.floor((b.left + b.right) / 2);
     var cy = Math.floor((b.top + b.bottom) / 2);
 
-    // 优先坐标+shell双戳，比 .click() 无障碍Action更可靠
+    // Prefer coordinate + shell double tap; more reliable than accessibility .click() action
     click(cx, cy);
     sleep(50);
     shell("input tap " + cx + " " + cy, true);
@@ -749,7 +749,7 @@ function findBottomContinueButton() {
 }
 
 function clickContinueIfExists(useBottomFallback) {
-    // 1. 精确匹配 "继续" 文字
+    // 1. Exact-match continue text
     var cont = text("继续").findOne(200)
         || textContains("继续").findOne(200)
         || desc("继续").findOne(200)
@@ -759,7 +759,7 @@ function clickContinueIfExists(useBottomFallback) {
 
     if (cont) {
         var tapped = clickNodeOnce(cont);
-        log("点击继续 @(" + tapped.x + "," + tapped.y + ")");
+        log("Tapped continue @(" + tapped.x + "," + tapped.y + ")");
         return true;
     }
 
@@ -767,16 +767,16 @@ function clickContinueIfExists(useBottomFallback) {
 
     if (useBottomFallback !== true) return false;
 
-    // 2. 只有调用方明确允许时，才找底部候选元素。
-    // level/menu/topic 页底部常有 A2+/返回/导航，不能在全局流程里误当成继续按钮。
+    // 2. Search bottom candidates only when the caller explicitly allows it.
+    // level/menu/topic pages often have A2+/back/navigation at the bottom; do not treat them as global continue buttons.
     var bottomBtn = findBottomContinueButton();
     if (bottomBtn) {
         clickNode(bottomBtn);
-        log("点击底部: " + (bottomBtn.text() || bottomBtn.desc() || bottomBtn.className()));
+        log("Tapped bottom candidate: " + (bottomBtn.text() || bottomBtn.desc() || bottomBtn.className()));
         return true;
     }
 
-    // 3. 纯坐标兜底：扫描底部 20% 区域，戳任意内容
+    // 3. Coordinate fallback: scan the bottom 20% area and tap any content
     var allViews = [].concat(
         toArr(className("android.widget.TextView").find()),
         toArr(className("android.widget.Button").find()),
@@ -788,10 +788,10 @@ function clickContinueIfExists(useBottomFallback) {
         var cy = Math.floor((b.top + b.bottom) / 2);
         if (cy > device.height * 0.78 && b.width() > 80 && b.height() > 30) {
             var txt = allViews[j].text() || allViews[j].desc() || "";
-            // 跳过退出/取消类
+            // Skip exit/cancel-like items
             if (txt.indexOf("退出") >= 0 || txt.indexOf("取消") >= 0) continue;
             clickNode(allViews[j]);
-            log("底部兜底戳: " + (txt || allViews[j].className()));
+            log("Bottom fallback tap: " + (txt || allViews[j].className()));
             return true;
         }
     }
@@ -827,12 +827,12 @@ function clickMidScreenContinueIcon() {
             click(cx, cy);
             sleep(50);
             press(cx, cy, 80);
-            log("点击中部继续/播放图标 @(" + cx + "," + cy + ")");
+            log("Tapped middle continue/play icon @(" + cx + "," + cy + ")");
             return true;
         }
     }
 
-    // neo-06样式的安全坐标兜底，只点中部播放按钮，不点底部循环/Home。
+    // Safe coordinate fallback for neo-06 style screens: only tap the middle play button, not bottom replay/Home.
     if (textContains("继续").exists()) {
         var absoluteY = Math.floor(device.width * 1.57);
         var points = [];
@@ -856,7 +856,7 @@ function clickMidScreenContinueIcon() {
             }
             sleep(50);
             press(tapped.x, tapped.y, 80);
-            log("按中部坐标点击继续/播放 @(" + tapped.x + "," + tapped.y + ")");
+            log("Tapped continue/play by middle coordinate @(" + tapped.x + "," + tapped.y + ")");
             return true;
         }
     }
@@ -895,17 +895,17 @@ function isOnHomePage() {
 }
 
 function findCourseNode(courseName) {
-    // 优先精确匹配，避免 "C1" 匹配到 "C1 Bridge"
+    // Prefer exact match to avoid matching C1 inside C1 Bridge
     var node = null;
     if (courseName == "C1 Bridge" || courseName == "B2+") {
         node = text(courseName).findOne(180);
     }
     if (!node && courseName == "C1") {
-        // 精确匹配单独的 "C1"，不匹配 "C1 Bridge"
+        // Exact-match standalone C1, not C1 Bridge
         node = textMatches("^\\s*C1\\s*$").findOne(180);
     }
     if (!node && courseName == "B2") {
-        // 精确匹配单独的 "B2"，不匹配 "B2+"
+        // Exact-match standalone B2, not B2+
         node = textMatches("^\\s*B2\\s*$").findOne(180);
     }
     if (!node) {
@@ -915,14 +915,14 @@ function findCourseNode(courseName) {
     return node;
 }
 
-// 严格检查：node对应的文字是否是已知的四个level之一
+// Strictly check whether node text is one of the known level choices
 function getCourseNameFromNode(node) {
     var txt = (node.text() || "").trim();
     var known = ["C1 Bridge", "C1", "B2+", "B2"];
     for (var i = 0; i < known.length; i++) {
         if (txt == known[i]) return known[i];
     }
-    // "C1" 必须精确匹配，不能是 "C1 Bridge" 之类
+    // C1 must be an exact match, not C1 Bridge or similar
     if (txt == "C1" || /^C1$/.test(txt)) return "C1";
     if (txt == "B2" || /^B2$/.test(txt)) return "B2";
     return null;
@@ -1013,7 +1013,7 @@ function handleLevelPage() {
     } else {
         var p = getLevelTapPoint(state.targetCourse);
         var tapped = tapByRatio(p.x, p.y);
-        log("  level文字节点不可见，按截图坐标点击 " + state.targetCourse + " @(" + tapped.x + "," + tapped.y + ")");
+        log("  Level text node is not visible; tapping screenshot coordinate for " + state.targetCourse + " @(" + tapped.x + "," + tapped.y + ")");
     }
     var moved = waitUntil(function () {
         return textContains("Unit").exists() || textContains("Certification").exists();
@@ -1021,7 +1021,7 @@ function handleLevelPage() {
     if (!moved) {
         var fallback = getLevelTapPoint(state.targetCourse);
         var tapped2 = tapByRatio(fallback.x, fallback.y);
-        log("  level点击后未进入Unit，补点坐标 " + state.targetCourse + " @(" + tapped2.x + "," + tapped2.y + ")");
+        log("  Did not enter Unit after level tap; retry coordinate tap for " + state.targetCourse + " @(" + tapped2.x + "," + tapped2.y + ")");
         moved = waitUntil(function () {
             return textContains("Unit").exists() || textContains("Certification").exists();
         }, 1200);
@@ -1033,21 +1033,21 @@ function handleLevelPage() {
     }
 
     state.levelFailCount++;
-    log("  level连续点击失败 " + state.levelFailCount + "/" + CONFIG.LEVEL_FAIL_RESTARTS);
+    log("  Consecutive level tap failures " + state.levelFailCount + "/" + CONFIG.LEVEL_FAIL_RESTARTS);
     state.targetCourse = "";
     if (state.levelFailCount == 2) {
         tapAccessibilityShortcut();
     }
     if (state.levelFailCount >= CONFIG.LEVEL_FAIL_RESTARTS) {
-        hardRestartNeo("neo-01连续点击level无效");
+        hardRestartNeo("neo-01 consecutive level taps are ineffective");
     }
 }
 
 function enterLearningModule() {
-    log("在首页，随机选择level");
+    log("On home page; randomly selecting level");
 
     ensureLearningTarget();
-    log("本轮目标: " + state.targetCourse + " / Unit " + state.targetUnit + " / subject前四随机#" + state.topicIndex);
+    log("Current round target: " + state.targetCourse + " / Unit " + state.targetUnit + " / random top-four subject #" + state.topicIndex);
 
     var course = findCourseNode(state.targetCourse);
     if (course) {
@@ -1055,7 +1055,7 @@ function enterLearningModule() {
         waitUntil(function () {
             return currentActivity().indexOf("Menu") < 0 || textContains("Unit").exists();
         }, 1200);
-        log("点击课程: " + state.targetCourse);
+        log("Tapped course: " + state.targetCourse);
         return;
     }
 
@@ -1072,12 +1072,12 @@ function enterLearningModule() {
         if (entry) {
             clickNode(entry);
             sleep(300);
-            log("点击学习入口: " + (entry.text() || entry.id()));
+            log("Tapped learning entry: " + (entry.text() || entry.id()));
             return;
         }
     }
 
-    log("未找到目标课程，滑动查找");
+    log("Target course not found; swiping to search");
     swipeUp();
     sleep(700);
 }
@@ -1091,7 +1091,7 @@ function isOnLessonPage() {
 }
 
 function handleLessonInteraction() {
-    log("处理课时页面");
+    log("Handling lesson page");
 
     tryAutoPlay();
 
@@ -1107,7 +1107,7 @@ function handleLessonInteraction() {
     }
 
     if (isVideoPlaying()) {
-        log("视频播放中，等待...");
+        log("Video is playing; waiting...");
         sleep(5000);
         return;
     }
@@ -1124,7 +1124,7 @@ function tryAutoPlay() {
     if (playBtn && !isVideoPlaying()) {
         playBtn.click();
         sleep(1000);
-        log("点击了播放按钮");
+        log("Tapped play button");
     }
 }
 
@@ -1201,13 +1201,13 @@ function collectClickableTextChoices() {
         var key = b.left + "," + b.top + "," + b.right + "," + b.bottom;
         if (seen[key]) continue;
         seen[key] = true;
-        // 优先存 clickable 父级，fallback 到文字本身
+        // Prefer clickable parent; fall back to text node itself
         options.push(p && p.clickable() ? p : texts[i]);
     }
     return options;
 }
 
-// 收集纯文字标签选项（父级不可点击，靠坐标戳）
+// Collect plain text label choices; parent is not clickable, so tap by coordinate
 function collectTextLabelChoices() {
     var options = [];
     var seen = {};
@@ -1217,7 +1217,7 @@ function collectTextLabelChoices() {
         if (!s || s.length < 2) continue;
         if (s == "" || s.indexOf("Product") >= 0 || s.indexOf("Secret") >= 0) continue;
         var p = texts[i].parent();
-        // 只收集父级不可点击的文字（clickable 的已经在上面处理了）
+        // Only collect text whose parent is not clickable; clickable cases were handled above
         if (p && p.clickable()) continue;
         var b = texts[i].bounds();
         if (b.top < device.height * 0.25 || b.top > device.height * 0.82) continue;
@@ -1244,7 +1244,7 @@ function clickTextLabelChoice() {
     var cx = Math.floor((b.left + b.right) / 2);
     var cy = Math.floor((b.top + b.bottom) / 2);
 
-    log("随机戳文字Label '" + opt.text() + "' @(" + cx + "," + cy + ")");
+    log("Random text-label tap '" + opt.text() + "' @(" + cx + "," + cy + ")");
     click(cx, cy);
     sleep(100);
     shell("input tap " + cx + " " + cy, true);
@@ -1261,8 +1261,8 @@ function clickClickableTextChoice() {
     var cx = Math.floor((b.left + b.right) / 2);
     var cy = Math.floor((b.top + b.bottom) / 2);
 
-    log("选项 #" + idx + "/" + options.length + " @(" + cx + "," + cy + ")");
-    // 坐标 + shell 双戳，确保命中
+    log("Option #" + idx + "/" + options.length + " @(" + cx + "," + cy + ")");
+    // Coordinate + shell double tap to improve hit rate
     click(cx, cy);
     sleep(80);
     shell("input tap " + cx + " " + cy, true);
@@ -1279,7 +1279,7 @@ function clickVisibleAnswerChoice() {
     var cx = Math.floor((b.left + b.right) / 2);
     var cy = Math.floor((b.top + b.bottom) / 2);
 
-    log("随机点击可见答案: " + opt.text + " #" + idx + "/" + options.length + " @(" + cx + "," + cy + ")");
+    log("Random visible answer tap: " + opt.text + " #" + idx + "/" + options.length + " @(" + cx + "," + cy + ")");
     click(cx, cy);
     sleep(50);
     shell("input tap " + cx + " " + cy, true);
@@ -1337,7 +1337,7 @@ function clickOrderedOption(index) {
     var b = opt.node.bounds();
     var cx = Math.floor((b.left + b.right) / 2);
     var cy = Math.floor((b.top + b.bottom) / 2);
-    log("按顺序点击选项 #" + index + "/" + options.length + " '" + opt.text + "' @(" + cx + "," + cy + ")");
+    log("Sequential option tap #" + index + "/" + options.length + " '" + opt.text + "' @(" + cx + "," + cy + ")");
     click(cx, cy);
     return true;
 }
@@ -1396,10 +1396,10 @@ function clickOrderedForBlankSlots() {
     var blanks = countVisibleBlankSlots();
     if (blanks <= 0) return false;
 
-    log("检测到完形填空下划线槽位: " + blanks + " 个，本轮连续按顺序点击前 " + blanks + " 个选项");
+    log("Detected fill-in-the-blank underline slots: " + blanks + "; sequentially tapping the first " + blanks + " options this round");
     for (var i = 0; i < blanks; i++) {
         if (!clickOrderedOption(i)) {
-            log("  第" + (i + 1) + "次顺序选择失败，停止");
+            log("  Sequential selection #" + (i + 1) + " failed; stopping");
             break;
         }
         sleep(450);
@@ -1412,33 +1412,33 @@ function clickOrderedForBlankSlots() {
 }
 
 function handleExercise() {
-    log("处理练习页面");
+    log("Handling exercise page");
 
-    // 1. 只点明确的"继续"文字；练习页底部常有重播按钮，不能启用底部兜底。
+    // 1. Tap only explicit continue text; exercise pages often have a bottom replay button, so bottom fallback is disabled.
     if (clickContinueIfExists(false)) return;
 
-    // 2. 完形填空：连续下划线算一个空；有几个空，就按顺序点击前几个选项。
+    // 2. Fill-in-the-blank: consecutive underscores count as one blank; tap the first N options in order.
     if (clickOrderedForBlankSlots()) return;
 
     // 3. True/False
     if (clickTrueFalseOption()) { sleep(180); return; }
 
-    // 4. neo-07 这类大卡片答案：True/False 或任意字符串，看到就随机选。
+    // 4. Large-card answers like neo-07: randomly select True/False or any visible string option.
     if (clickVisibleAnswerChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 5. 中间区域图片选项：没有文字选项时，随机点图片。
+    // 5. Middle-area image choices: randomly tap an image when there are no text choices.
     if (clickImageOption()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 6. 纯文本选项（有clickable父级，最常见）
+    // 6. Plain text choices with clickable parent; the common case
     if (clickClickableTextChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 7. 纯文字标签（无clickable父级，坐标戳）
+    // 7. Plain text labels without clickable parent; tap by coordinate
     if (clickTextLabelChoice()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 8. ABCD/RadioButton/CheckBox 等标准控件
+    // 8. Standard controls such as ABCD, RadioButton, CheckBox
     if (clickRandomOption()) { sleep(180); submitAnswer(); sleep(120); return; }
 
-    // 9. 口语/填空 特殊题型
+    // 9. Special speaking/fill-in-the-blank exercise types
     if (textContains("跟读").exists() || textContains("录音").exists() || textContains("说话").exists()) {
         handleSpeakingExercise(); return;
     }
@@ -1446,7 +1446,7 @@ function handleExercise() {
         handleFillBlank(); return;
     }
 
-    // 10. 无匹配 → 滑动
+    // 10. No match -> swipe
     swipeUp();
     sleep(350);
 }
@@ -1478,7 +1478,7 @@ function clickTrueFalseOption() {
         if (textContains("The Secret Code").exists() && textContains("The Crime").exists()) {
             var useTrue = Math.random() < 0.5;
             var tapped = tapByRatio(useTrue ? 0.26 : 0.74, 0.335);
-            log("True/False文字节点不可见，按截图坐标随机点击 " + (useTrue ? "True" : "False") + " @(" + tapped.x + "," + tapped.y + ")");
+            log("True/False text nodes are not visible; random screenshot-coordinate tap for " + (useTrue ? "True" : "False") + " @(" + tapped.x + "," + tapped.y + ")");
             return true;
         }
         return false;
@@ -1494,7 +1494,7 @@ function clickTrueFalseOption() {
     click(cx, cy);
     sleep(50);
     shell("input tap " + cx + " " + cy, true);
-    log("随机点击True/False: " + (opt.text() || idx) + " @(" + cx + "," + cy + ")");
+    log("Random True/False tap: " + (opt.text() || idx) + " @(" + cx + "," + cy + ")");
     return true;
 }
 
@@ -1508,7 +1508,7 @@ function clickImageOption() {
     var x = Math.floor((b.left + b.right) / 2);
     var y = Math.floor((b.top + b.bottom) / 2);
     click(x, y);
-    log("随机点击中间图片选项 #" + idx + "/" + options.length + " @(" + x + "," + y + ") " + (opt.desc() || ""));
+    log("Random middle image option tap #" + idx + "/" + options.length + " @(" + x + "," + y + ") " + (opt.desc() || ""));
     return true;
 }
 
@@ -1518,7 +1518,7 @@ function hasMiddleImageOptions() {
 
 function collectMiddleImageOptions() {
     var options = [];
-    // 收集所有图片选项：clickable ImageView + clickable ImageButton + 带描述的ImageView
+    // Collect all image choices: clickable ImageView + clickable ImageButton + ImageView with description
     var imgs = [].concat(
         toArr(className("android.widget.ImageView").clickable(true).find()),
         toArr(className("android.widget.ImageButton").clickable(true).find()),
@@ -1528,7 +1528,7 @@ function collectMiddleImageOptions() {
         toArr(className("android.widget.LinearLayout").clickable(true).find()),
         toArr(className("android.widget.RelativeLayout").clickable(true).find())
     );
-    // 也收集有 contentDescription 的非 clickable ImageView（纯图片选项常靠 desc 标识）
+    // Also collect non-clickable ImageView nodes with contentDescription; pure image choices often use desc.
     var descImgs = className("android.widget.ImageView").find();
     for (var d = 0; d < descImgs.length; d++) {
         if (descImgs[d].desc() && descImgs[d].desc().length > 0) {
@@ -1539,7 +1539,7 @@ function collectMiddleImageOptions() {
     var seen = {};
     for (var i = 0; i < imgs.length; i++) {
         var b = imgs[i].bounds();
-        // 图片选项可能在上方四分之一到中部；过滤状态栏、底部重播/Home、太小图标。
+        // Image choices may appear from the upper quarter to the middle; filter status bar, bottom replay/Home, and tiny icons.
         if (b.top < device.height * 0.08 || b.bottom > device.height * 0.78) continue;
         if (b.width() < 60 || b.height() < 60) continue;
         if (b.width() > device.width * 0.45 || b.height() > device.height * 0.35) continue;
@@ -1574,7 +1574,7 @@ function clickRandomOption() {
     var checks = className("android.widget.CheckBox").find();
     for (var i = 0; i < checks.length; i++) addOpt(checks[i], "check");
 
-    // 2. A/B/C/D 文本选项（扩展匹配: "A.", "A)", "(A)", "A、", "A ", "A:"）
+    // 2. A/B/C/D text choices; extended patterns: "A.", "A)", "(A)", "A、", "A ", "A:"
     var abcdPatterns = [
         "^[A-F][.．)、:：]",
         "^\\s*[A-F]\\s*$",
@@ -1586,17 +1586,17 @@ function clickRandomOption() {
         for (var m = 0; m < matches.length; m++) addOpt(matches[m], "ABCD");
     }
 
-    // 3. True/False 按钮
+    // 3. True/False buttons
     var btns = className("android.widget.Button").find();
     for (var b = 0; b < btns.length; b++) {
         var s = btns[b].text();
         if (/^\s*(True|False|TRUE|FALSE|true|false)\s*[:：]?$/.test(s)) addOpt(btns[b], "TF-btn");
     }
-    // True/False 文本
+    // True/False text
     var tfTexts = textMatches("^\\s*(True|False|TRUE|FALSE|true|false|T|F)\\s*[:：]?$").find();
     for (var t = 0; t < tfTexts.length; t++) addOpt(tfTexts[t], "TF-text");
 
-    // 4. clickable View 选项中在屏幕中间的
+    // 4. Clickable View choices in the middle area
     var views = className("android.view.View").clickable(true).find();
     for (var v = 0; v < views.length; v++) {
         var vb = views[v].bounds();
@@ -1605,7 +1605,7 @@ function clickRandomOption() {
         addOpt(views[v], "view");
     }
 
-    // 5. 纯文本选项（有 clickable 父级，中间区域）
+    // 5. Plain text choices with clickable parent in the middle area
     var texts = className("android.widget.TextView").find();
     for (var ct = 0; ct < texts.length; ct++) {
         var txt = texts[ct].text();
@@ -1635,7 +1635,7 @@ function clickRandomOption() {
         var b = opt.bounds();
         var cx = Math.floor((b.left + b.right) / 2);
         var cy = Math.floor((b.top + b.bottom) / 2);
-        log("选择了选项 " + randomIndex + "/" + options.length + " @(" + cx + "," + cy + ")");
+        log("Selected option " + randomIndex + "/" + options.length + " @(" + cx + "," + cy + ")");
         click(cx, cy);
         sleep(80);
         shell("input tap " + cx + " " + cy, true);
@@ -1646,7 +1646,7 @@ function clickRandomOption() {
 }
 
 function handleSpeakingExercise() {
-    log("处理口语练习");
+    log("Handling speaking exercise");
 
     var micBtn = idContains("mic").findOne(1000)
         || idContains("record").findOne(1000)
@@ -1658,7 +1658,7 @@ function handleSpeakingExercise() {
         micBtn.click();
         sleep(3000 + Math.random() * 2000);
 
-        var stopBtn = textContains("停止").findOne(500)
+        var stopBtn = textContains("Stop").findOne(500)
             || idContains("stop").findOne(500);
         if (stopBtn) {
             stopBtn.click();
@@ -1678,7 +1678,7 @@ function handleSpeakingExercise() {
 }
 
 function handleFillBlank() {
-    log("处理填空题");
+    log("Handling fill-in-the-blank exercise");
 
     var editText = className("android.widget.EditText").findOne(2000);
     if (editText) {
@@ -1706,7 +1706,7 @@ function submitAnswer() {
 
     if (submitBtn) {
         submitBtn.click();
-        log("提交答案");
+        log("Submitted answer");
         sleep(500);
     }
 }
@@ -1732,7 +1732,7 @@ function isOnNeoScorePage() {
             return true;
         }
     }
-    // neo-08 这类结果页至少有左上关闭X，没有题目选项；有时分数数字不是TextView。
+    // neo-08 style result pages have at least a top-left close X and no answer choices; sometimes the score number is not a TextView.
     return hasTopLeftCloseButton() && !hasVisibleAnswerChoices() && !hasClickableTextChoices();
 }
 
@@ -1786,8 +1786,8 @@ function findBottomRightHomeButton() {
 }
 
 function tapBottomRightHome() {
-    // neo-08 小房子按钮中心约 x=75%, y=87%。这里扫右下 Home 圆形按钮区域，
-    // 避免设备坐标系、导航栏高度或截图缩放差异导致单点点不中。
+    // neo-08 Home icon center is roughly x=75%, y=87%. Scan the lower-right Home circle area,
+    // to avoid missing due to coordinate system, nav bar height, or screenshot scaling differences.
     var absoluteX = Math.floor(device.width * 0.75);
     var absoluteY = Math.floor(device.width * 1.885);
     if (absoluteY < device.height * 0.98) {
@@ -1796,14 +1796,14 @@ function tapBottomRightHome() {
         press(absoluteX, absoluteY, 80);
         sleep(120);
         if (isOnLevelPage() || isOnUnitListPage() || isOnTopicPage() || currentActivity().indexOf("Menu") >= 0) {
-            log("  Home命中 absolute @(" + absoluteX + "," + absoluteY + ")");
+            log("  Home hit absolute @(" + absoluteX + "," + absoluteY + ")");
             return;
         }
     }
 
     var xRatios = [0.74, 0.76, 0.78];
     var yRatios = [0.85, 0.87, 0.89];
-    log("  尝试点击Home区域 device=" + device.width + "x" + device.height);
+    log("  Trying Home area device=" + device.width + "x" + device.height);
     for (var yi = 0; yi < yRatios.length; yi++) {
         for (var xi = 0; xi < xRatios.length; xi++) {
             var x = Math.floor(device.width * xRatios[xi]);
@@ -1813,19 +1813,19 @@ function tapBottomRightHome() {
             press(x, y, 80);
             sleep(120);
             if (isOnLevelPage() || isOnUnitListPage() || isOnTopicPage() || currentActivity().indexOf("Menu") >= 0) {
-                log("  Home命中 @(" + x + "," + y + ") ratio=(" + xRatios[xi] + "," + yRatios[yi] + ")");
+                log("  Home hit @(" + x + "," + y + ") ratio=(" + xRatios[xi] + "," + yRatios[yi] + ")");
                 return;
             }
         }
     }
-    log("  Home区域扫点仍未命中");
+    log("  Home area scan still missed");
 }
 
 function handleResultPage() {
-    log("处理得分页面");
+    log("Handling score/result page");
 
     if (CONFIG.RESTART_AFTER_RESULT) {
-        hardRestartNeo("完成一轮后重启，避免长时间运行触摸/无障碍失效", true);
+        hardRestartNeo("Restart after completing a round to avoid long-running touch/accessibility failure", true);
         return;
     }
 
@@ -1836,7 +1836,7 @@ function handleResultPage() {
     state.targetTopicName = "";
     state.topicIndex = 0;
     state.samePageCount = 0;
-    log("已回Home，重置下一轮随机目标");
+    log("Returned Home; reset random target for next round");
     waitUntil(function () {
         return !isOnResultPage()
             && (isOnLevelPage() || isOnUnitListPage() || currentActivity().indexOf("Menu") >= 0);
@@ -1844,11 +1844,11 @@ function handleResultPage() {
 }
 
 // ============================================================
-// 单元列表页（ProMenuActivity / Unit 选择页）
-// C1 Bridge、C2 Bridge 等课程的 Unit 列表
+// Unit list page: ProMenuActivity / Unit selection page
+// Unit list for courses such as C1 Bridge and C2 Bridge
 // ============================================================
 function isOnMenuPage() {
-    // 包含 "Unit" 文字 或 命中 ProMenuActivity
+    // Contains Unit text or matches ProMenuActivity
     return textContains("Unit").exists()
         || textContains("Certification").exists()
         || currentActivity().indexOf("Menu") >= 0;
@@ -1921,7 +1921,7 @@ function findTopicNameNearUnit(unitNode) {
 }
 
 function handleMenuPage() {
-    log("=== 处理单元列表页 ===");
+    log("=== Handling Unit list page ===");
 
     ensureLearningTarget();
 
@@ -1929,7 +1929,7 @@ function handleMenuPage() {
         state.targetUnit = random(1, 4);
     }
 
-    toast("Menu页面，随机戳Unit" + state.targetUnit);
+    toast("Menu page; random tap Unit" + state.targetUnit);
 
     var target = textContains("Unit " + state.targetUnit).findOne(180)
         || textContains("Unit" + state.targetUnit).findOne(180);
@@ -1946,13 +1946,13 @@ function handleMenuPage() {
     if (target) {
         var txt = target.text();
         state.targetTopicName = parseTopicNameFromUnitText(txt) || findTopicNameNearUnit(target);
-        log("  目标文字: " + txt + " topic=" + state.targetTopicName);
+        log("  Target text: " + txt + " topic=" + state.targetTopicName);
     }
 
     var unitPoint = getUnitTapPoint(state.targetUnit);
     var tapped = tapOnceByRatio(unitPoint.x, unitPoint.y);
-    log("  单击Unit" + state.targetUnit + "卡片中心 @(" + tapped.x + "," + tapped.y + ")");
-    toast("已戳 Unit" + state.targetUnit);
+    log("  Single tap Unit" + state.targetUnit + " card center @(" + tapped.x + "," + tapped.y + ")");
+    toast("Tapped Unit" + state.targetUnit);
 
     var moved = waitUntil(function () {
         var a = currentActivity();
@@ -1964,17 +1964,17 @@ function handleMenuPage() {
     }, 1500);
 
     var act = currentActivity();
-    log("  点击后Activity: " + act + (moved ? " (已跳转)" : ""));
+    log("  Activity after tap: " + act + (moved ? " (moved)" : ""));
 
     if (moved) {
         if (act.indexOf("ProgressDialog") >= 0) {
-            log("  等待loading...");
+            log("  Waiting for loading...");
             waitActivityGone("android.app.ProgressDialog", 1800);
         }
         return;
     }
 
-    log("  单击无效，再单击一次Unit卡片中心");
+    log("  Single tap ineffective; tapping Unit card center again");
     tapped = tapOnceByRatio(unitPoint.x, unitPoint.y);
 
     moved = waitUntil(function () {
@@ -1987,20 +1987,20 @@ function handleMenuPage() {
     }, 1500);
 
     if (moved) {
-        log("  ★ 第二次单击成功");
+        log("  Second tap succeeded");
         if (currentActivity().indexOf("ProgressDialog") >= 0) {
             waitActivityGone("android.app.ProgressDialog", 1800);
         }
         return;
     }
 
-    log("  Unit卡片点击无效，停留等待下一轮重试");
+    log("  Unit card tap ineffective; stay and retry next loop");
     sleep(300);
 }
 
 // ============================================================
-// Unit 子课程列表页（ProMenuActivity + 含 Mastery Test/Dictations 等）
-// 点进 Unit 后的 topic 选择页
+// Unit sub-course list page: ProMenuActivity with Mastery Test/Dictations, etc.
+// Topic selection page after entering a Unit
 // ============================================================
 function isOnTopicPage() {
     if (currentActivity().indexOf("Menu") < 0) return false;
@@ -2101,16 +2101,16 @@ function getSubjectText(node) {
 function handleTopicPage() {
     ensureLearningTarget();
 
-    log("处理subject列表页，当前随机subjectIndex=" + state.topicIndex);
+    log("Handling subject list page; current random subjectIndex=" + state.topicIndex);
     toast("Subject #" + state.topicIndex);
 
     var subjects = collectSubjectNodes();
-    log("  找到前四subject候选 " + subjects.length + " 个");
+    log("  Found first-four subject candidates: " + subjects.length + "");
 
     if (subjects.length == 0) {
         var topicPoint = getTopicTapPoint(state.topicIndex);
         var tapped = tapByRatio(topicPoint.x, topicPoint.y);
-        log("  找不到subject文字节点，按截图坐标点击subject#" + state.topicIndex + " @(" + tapped.x + "," + tapped.y + ")");
+        log("  Subject text node not found; tapping screenshot coordinate for subject#" + state.topicIndex + " @(" + tapped.x + "," + tapped.y + ")");
         waitUntil(function () {
             var a = currentActivity();
             return a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0;
@@ -2125,19 +2125,19 @@ function handleTopicPage() {
     var cx = Math.floor((b.left + b.right) / 2);
     var cy = Math.floor((b.top + b.bottom) / 2);
 
-    log("  戳 Unit" + state.targetUnit + " - " + subjectText + " @(" + cx + "," + cy + ")");
+    log("  Tap Unit" + state.targetUnit + " - " + subjectText + " @(" + cx + "," + cy + ")");
 
     clickNode(el);
 
-    // 轮询等待离开Menu或进入BottomSheet
+    // Poll until leaving Menu or entering BottomSheet
     var moved = waitUntil(function () {
         var a = currentActivity();
         return a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0;
     }, 1000);
 
-    if (moved) { log("  ★ 进入成功"); return; }
+    if (moved) { log("  Entered successfully"); return; }
 
-    log("  click无效，试 shell input tap");
+    log("  click ineffective; trying shell input tap");
     shell("input tap " + cx + " " + cy, true);
 
     moved = waitUntil(function () {
@@ -2145,9 +2145,9 @@ function handleTopicPage() {
         return a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0;
     }, 1000);
 
-    if (moved) { log("  ★ shell进入成功"); return; }
+    if (moved) { log("  shell tap entered successfully"); return; }
 
-    log("  shell无效，试 press");
+    log("  shell ineffective; trying press");
     press(cx, cy, 200);
 
     moved = waitUntil(function () {
@@ -2155,16 +2155,16 @@ function handleTopicPage() {
         return a.indexOf("Menu") < 0 || a.indexOf("BottomSheet") >= 0;
     }, 1000);
 
-    if (moved) { log("  ★ press进入成功"); return; }
+    if (moved) { log("  press entered successfully"); return; }
 
-    log("  全部失败，滑动");
+    log("  All attempts failed; swiping");
     swipeUp();
     sleep(700);
 }
 
 // ============================================================
-// 步骤选择弹窗（BottomSheetDialog）
-// 点 topic 后弹出的 Step 1 Preview / Step 2 ... 选择
+// Step selection dialog (BottomSheetDialog)
+// Step 1 Preview / Step 2 selection shown after tapping a topic
 // ============================================================
 function isOnStepSheet() {
     return currentActivity().indexOf("BottomSheet") >= 0
@@ -2202,10 +2202,10 @@ function findFirstStepSheetOption() {
 }
 
 function handleStepSheet() {
-    log("处理步骤弹窗");
-    toast("步骤弹窗→Step1Preview");
+    log("Handling step dialog");
+    toast("Step dialog -> Step1Preview");
 
-    // 直接找 "Step 1 Preview" 文字
+    // Directly search for Step 1 Preview text
     var target = text("Step 1 Preview").findOne(180);
     if (!target) {
         target = textContains("Preview").findOne(180);
@@ -2215,20 +2215,20 @@ function handleStepSheet() {
     }
     if (!target) {
         var tapped = tapByRatio(0.50, 0.530);
-        log("  找不到Step文字节点，按截图坐标点击Step1 @(" + tapped.x + "," + tapped.y + ")");
+        log("  Step text node not found; tapping Step1 screenshot coordinate @(" + tapped.x + "," + tapped.y + ")");
         sleep(300);
         return;
     }
 
-    log("  找到: " + (target.text() || target.desc() || target.id()));
+    log("  Found: " + (target.text() || target.desc() || target.id()));
     clickNode(target);
 
     sleep(300);
-    log("  点击后Activity: " + currentActivity());
+    log("  Activity after tap: " + currentActivity());
 }
 
 // ============================================================
-// MainActivity - Preview 页（含 "Preview" 文字、"GO" 按钮）
+// MainActivity - Preview page with Preview text or GO button
 // ============================================================
 function isOnPreviewPage() {
     return textContains("Preview").exists()
@@ -2236,54 +2236,54 @@ function isOnPreviewPage() {
 }
 
 function handlePreviewPage() {
-    log("处理Preview/GO页");
+    log("Handling Preview/GO page");
 
-    // 重置停滞计数——说明页面在变化
+    // Reset stuck counter; this means the page is progressing
     state.samePageCount = 0;
 
-    // GO 按钮出现就点
+    // Tap GO when it appears
     var goBtn = text("GO").findOne(180);
     if (goBtn) {
-        toast("点击GO");
+        toast("Tap GO");
         clickNode(goBtn);
-        log("  点击GO");
-        // 轮询等AutoX弹窗或Activity变化
+        log("  Tap GO");
+        // Poll for AutoX dialog or Activity change
         waitUntil(function () {
             var a = currentActivity();
             return a.indexOf("ComposeDialog") >= 0 || a.indexOf("AutoX") >= 0 || a.indexOf("MainActivity") < 0;
         }, 900);
-        // 处理AutoX弹窗
+        // Handle AutoX dialog
         var act2 = currentActivity();
         if (act2.indexOf("ComposeDialog") >= 0 || act2.indexOf("AutoX") >= 0) {
             var cont = text("继续").findOne(300);
-            if (cont) { cont.click(); log("  处理AutoX弹窗"); }
+            if (cont) { cont.click(); log("  Handled AutoX dialog"); }
         }
         return;
     }
 
-    // 还没有GO，短轮询等待下载完成；如果仍不可见，用截图坐标兜底。
-    log("  等待下载/GO...");
+    // If GO is not visible yet, briefly poll for download completion; if still invisible, use screenshot coordinate fallback.
+    log("  Waiting for download/GO...");
     var found = false;
     for (var i = 0; i < 6; i++) {
         sleep(200);
         if (text("GO").exists()) { found = true; break; }
     }
     if (found) {
-        log("  GO已出现");
+        log("  GO appeared");
         return;
     }
 
     if (textContains("Preview").exists()) {
         var tapped = tapByRatio(0.50, 0.885);
-        log("  GO文字节点不可见，按截图坐标点击GO @(" + tapped.x + "," + tapped.y + ")");
+        log("  GO text node not visible; tapping GO screenshot coordinate @(" + tapped.x + "," + tapped.y + ")");
     }
 }
 
 // ============================================================
-// MainActivity - 完成页（有  但无 Preview 无 GO）
+// MainActivity - completion page: has icon but no Preview/GO
 // ============================================================
 function isOnCompletePage() {
-    // 排除 Preview/GO；完成页必须优先于练习页判断，避免 neo-08 被误判成练习页。
+    // Exclude Preview/GO; completion page must be checked before exercise to avoid misclassifying neo-08 as exercise.
     if (textContains("Preview").exists() || text("GO").exists()) return false;
     return text("✗").exists()
         || text("×").exists()
@@ -2294,11 +2294,11 @@ function isOnCompletePage() {
 }
 
 function handleCompletePage() {
-    log("处理完成页");
-    toast("完成，重新开始");
+    log("Handling completion page");
+    toast("Done; restarting");
 
     if (CONFIG.RESTART_AFTER_RESULT) {
-        hardRestartNeo("完成页后重启，避免长时间运行触摸/无障碍失效", true);
+        hardRestartNeo("Restart after completion page to avoid long-running touch/accessibility failure", true);
         return;
     }
 
@@ -2309,7 +2309,7 @@ function handleCompletePage() {
     state.targetTopicName = "";
     state.topicIndex = 0;
     state.samePageCount = 0;
-    log("  已请求回Home，下一轮从level重新开始");
+    log("  Requested Home; next round starts from level");
 
     waitUntil(function () {
         var a = currentActivity();
@@ -2318,37 +2318,37 @@ function handleCompletePage() {
 }
 
 function handleGenericScreen() {
-    log("处理通用界面: " + currentActivity());
+    log("Handling generic screen: " + currentActivity());
 
-    // 1. 找 GO / Start 按钮（下载完成后的入口）
+    // 1. Find GO / Start button, the entry after download completes
     var goBtn = text("GO").findOne(500) || text("Go").findOne(500)
              || text("START").findOne(500) || text("Start").findOne(500)
              || textContains("开始").findOne(500);
     if (goBtn) {
         var b = goBtn.bounds();
         click(Math.floor((b.left + b.right) / 2), Math.floor((b.top + b.bottom) / 2));
-        log("  点击GO/Start");
+        log("  Tap GO/Start");
         sleep(900);
         return;
     }
 
-    // 2. 找提交按钮（可能在答题页）
+    // 2. Find submit button; may be on exercise page
     var submit = text("提交").findOne(500) || textContains("Submit").findOne(500);
     if (submit) {
         submit.click();
-        log("  点击提交");
+        log("  Tapped submit");
         sleep(700);
         return;
     }
 
-    // 3. 找可点击按钮（原有逻辑）
+    // 3. Find clickable buttons; original fallback logic
     var clickableElements = className("android.widget.Button").clickable(true).find();
     for (var i = 0; i < Math.min(clickableElements.length, 10); i++) {
         try {
             var el = clickableElements[i];
             var elText = el.text();
             if (elText && elText.length > 0) {
-                log("  点击按钮: " + elText);
+                log("  Tapped button: " + elText);
                 el.click();
                 sleep(700);
                 return;
@@ -2356,46 +2356,46 @@ function handleGenericScreen() {
         } catch (e) {}
     }
 
-    // 4. 找 A/B/C/D 选项（答题）
+    // 4. Find A/B/C/D answer choices
     var options = textMatches("^[A-D][.．)]").find();
     if (options.length > 0) {
         var idx = Math.floor(Math.random() * Math.min(options.length, 4));
         var opt = options[idx];
-        log("  随机选: " + opt.text());
+        log("  Random pick: " + opt.text());
         opt.click();
         sleep(500);
         return;
     }
 
-    // 5. 不在通用逻辑里点X/关闭，避免neo-08结果页误退出。
+    // 5. Do not tap X/close in generic logic, to avoid exiting neo-08 result page.
 
-    // 6. 尝试坐标戳任何看起来有用的文字
+    // 6. Try coordinate-tapping useful-looking text
     var keywords = ["继续", "下一", "确定", "完成", "Next", "OK", "Done"];
     for (var k = 0; k < keywords.length; k++) {
         var el = textContains(keywords[k]).findOne(300);
         if (el) {
             var b = el.bounds();
             click(Math.floor((b.left + b.right) / 2), Math.floor((b.top + b.bottom) / 2));
-            log("  坐标戳: " + keywords[k]);
+            log("  Coordinate tap: " + keywords[k]);
             sleep(700);
             return;
         }
     }
 
-    // 7. 实在没辙也不自动返回，避免误退到上一层。
-    log("  无可用操作，等待下一轮重试");
+    // 7. Do not auto-back even as a last resort, to avoid leaving the current layer.
+    log("  No available action; waiting for next retry loop");
     sleep(700);
 }
 
 function recoverFromError() {
-    log("尝试错误恢复...");
+    log("Trying error recovery...");
 
     if (!currentPackage().equals(CONFIG.APP_PACKAGE)) {
         launchNeoApp();
         return;
     }
 
-    log("错误恢复: 保持当前页面，等待下一轮重新识别");
+    log("Error recovery: keep current page and wait for next recognition loop");
     sleep(700);
     dismissPopups();
 }
@@ -2424,19 +2424,19 @@ function random(min, max) {
 }
 
 function debugCurrentScreen() {
-    log("=== 当前界面调试信息 ===");
-    log("包名: " + currentPackage());
+    log("=== Current Screen Debug Info ===");
+    log("Package: " + currentPackage());
     log("Activity: " + currentActivity());
 
     var allText = className("android.widget.TextView").find();
-    log("页面文本元素数量: " + allText.length);
+    log("Text element count: " + allText.length);
     for (var i = 0; i < Math.min(allText.length, 20); i++) {
         var t = allText[i];
         log("  [" + i + "] text=" + t.text() + " id=" + t.id() + " bounds=" + t.bounds());
     }
 
     var allButtons = className("android.widget.Button").find();
-    log("按钮数量: " + allButtons.length);
+    log("Button count: " + allButtons.length);
     for (var i = 0; i < Math.min(allButtons.length, 10); i++) {
         var b = allButtons[i];
         log("  [" + i + "] text=" + b.text() + " id=" + b.id() + " bounds=" + b.bounds());
